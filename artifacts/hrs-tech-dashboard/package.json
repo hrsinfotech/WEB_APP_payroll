@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
     "build": "vite build --config vite.config.ts",
-    "desktop:dev": "pnpm run build && electron .",
+    "desktop:dev": "set \"PORT=24619\" && set \"BASE_PATH=./\" && npm run build && electron .",
     "build:windows": "node scripts/build-windows.mjs",
     "build:android": "pnpm run build && npx cap sync android && npx cap open android",
     "build:android:apk": "node scripts/build-android.mjs",

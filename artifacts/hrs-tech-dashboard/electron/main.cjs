@@ -17,8 +17,17 @@ function findDockerExecutable() {
   return candidates.find((candidate) => candidate === "docker" || fs.existsSync(candidate));
 }
 
+function findRuntimePath() {
+  const candidates = [
+    path.join(process.resourcesPath, "runtime"),
+    path.join(app.getAppPath(), "installer", "runtime"),
+    path.join(__dirname, "..", "installer", "runtime"),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, "docker-compose.yml")));
+}
+
 function startRuntime() {
-  const runtimePath = path.join(process.resourcesPath, "runtime");
   const dockerExecutable = findDockerExecutable();
   if (!dockerExecutable) {
     dialog.showMessageBox({
@@ -26,6 +35,14 @@ function startRuntime() {
       title: "Docker Desktop is required",
       message: "Docker Desktop was not found. Start Docker Desktop and reopen HRS Tech Security Dashboard.",
     });
+    return;
+  }
+  const runtimePath = findRuntimePath();
+  if (!runtimePath) {
+    dialog.showErrorBox(
+      "Application services are unavailable",
+      "The bundled Docker runtime was not found. Reinstall the dashboard or run it from the project build.",
+    );
     return;
   }
 
