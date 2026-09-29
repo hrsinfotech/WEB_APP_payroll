@@ -32,8 +32,8 @@ The current migrated workflow is User Management, backed by a Spring Boot API an
 Open PowerShell in the repository root:
 
 ```powershell
-git clone https://github.com/hrsinfotech/AMS_WEB_APP1.git
-cd AMS_WEB_APP1
+git clone https://github.com/hrsinfotech/AMS_Payroll.git
+cd AMS_Payroll
 corepack enable
 pnpm install
 docker compose up -d
