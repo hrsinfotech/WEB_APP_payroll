@@ -22,8 +22,9 @@ import { z } from "zod";
 import {
   DocumentComposer,
   DocumentPreview,
-  type ComposedDocument,
+  nextDocumentNumber,
   type CompanyProfile,
+  type ComposedDocument,
   type DocumentAccount,
   type DocumentKind,
 } from "@/pages/accounts-documents";
@@ -308,28 +309,6 @@ function documentTab(kind: DocumentKind): AccountTab {
   return `${kind}s` as AccountTab;
 }
 
-function nextDocumentNumber(kind: DocumentKind, documents: LedgerDocument[]) {
-  const prefixes: Record<DocumentKind, string> = {
-    Invoice: "INV",
-    "Tax Invoice": "TAX",
-    "Purchase Order": "PO",
-    Quotation: "QUO",
-  };
-  const year = new Date().getFullYear();
-  const prefix = prefixes[kind];
-  const pattern =
-    kind === "Quotation"
-      ? new RegExp(`^(?:QUO|QT)-${year}-(\\d+)$`)
-      : new RegExp(`^${prefix}-${year}-(\\d+)$`);
-  const sequence =
-    documents.reduce((maximum, document) => {
-      if (document.kind !== kind) return maximum;
-      const match = pattern.exec(document.number);
-      return match ? Math.max(maximum, Number(match[1])) : maximum;
-    }, 0) + 1;
-  return `${prefix}-${year}-${String(sequence).padStart(4, "0")}`;
-}
-
 function statusClass(status: DocumentStatus | PayrollRecord["status"]) {
   if (status === "Paid")
     return "border-emerald-400/20 bg-emerald-400/10 text-emerald-300";
@@ -513,10 +492,17 @@ function AccountsPage({ notify }: { notify: Notify }) {
     notify(`${account.kind} added to Accounts.`, "success");
   };
 
-  const persistNewDocument = (document: LedgerDocument) => {
-    const savedDocument = {
+  const persistNewDocument = (document: ComposedDocument) => {
+    const issueYear = Number((document.issueDate ?? "").slice(0, 4));
+    const savedDocument: LedgerDocument = {
       ...document,
-      number: nextDocumentNumber(document.kind, documents),
+      number: nextDocumentNumber(
+        document.kind,
+        documents,
+        Number.isInteger(issueYear) && issueYear > 0
+          ? issueYear
+          : new Date().getFullYear(),
+      ),
     };
     setDocuments((current) => [savedDocument, ...current]);
     setDocumentOpen(false);
@@ -571,6 +557,19 @@ function AccountsPage({ notify }: { notify: Notify }) {
     setAccounts((current) => current.filter((account) => account.id !== id));
     notify("Contact removed.", "success");
   };
+
+  const documentForm = documentOpen ? (
+    <DocumentComposer
+      accounts={accounts}
+      documents={documents}
+      company={company}
+      onCompanyChange={setCompany}
+      kind={newDocument}
+      onKindChange={setNewDocument}
+      onClose={() => setDocumentOpen(false)}
+      onSave={persistNewDocument}
+    />
+  ) : null;
 
   const contactForm = contactOpen && (
     <div
@@ -1183,24 +1182,12 @@ function AccountsPage({ notify }: { notify: Notify }) {
         </div>
       )}
       {contactForm}
-      {documentOpen && (
-        <DocumentComposer
-          accounts={accounts}
-          company={company}
-          kind={newDocument}
-          nextNumber={nextDocumentNumber(newDocument, documents)}
-          onKindChange={setNewDocument}
-          onClose={() => setDocumentOpen(false)}
-          onSave={persistNewDocument}
-          onCompanyChange={setCompany}
-          notify={notify}
-        />
-      )}
+      {documentForm}
       {previewDocument && (
         <DocumentPreview
           document={previewDocument}
           account={accountById.get(previewDocument.accountId)}
-          company={company}
+          company={previewDocument.issuer ?? company}
           onClose={() => setPreviewDocument(null)}
           notify={notify}
         />
@@ -1235,7 +1222,7 @@ function DocumentTable({
             <th className="px-3 py-2.5">GST</th>
             <th className="px-3 py-2.5">TOTAL</th>
             <th className="px-3 py-2.5">STATUS</th>
-            <th className="px-3 py-2.5">ACTIONS</th>
+            <th className="px-3 py-2.5">ACTION</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800/70">
@@ -1273,13 +1260,13 @@ function DocumentTable({
                     onClick={() => onPreview(document)}
                     className="text-[9px] font-medium text-cyan-300 hover:text-cyan-200"
                   >
-                    Preview
+                    View / PDF
                   </button>
                   {document.status !== "Paid" &&
                     document.status !== "Draft" && (
                       <button
                         onClick={() => onMarkPaid(document.id)}
-                        className="text-[9px] font-medium text-slate-400 hover:text-emerald-300"
+                        className="text-[9px] font-medium text-slate-400 hover:text-slate-200"
                       >
                         Mark paid
                       </button>

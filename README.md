@@ -1,6 +1,7 @@
 # HRS Tech Security Dashboard
 
 HRS Tech Security Dashboard is a cross-platform application for access control, attendance, visitor, credential, and security operations. Supports:
+
 - **Windows Desktop** - Electron-based native application
 - **Android Mobile** - Capacitor-based native app (Android 6+)
 - **Web Browser** - React/Vite web application
@@ -10,6 +11,7 @@ The current migrated workflow is User Management, backed by a Spring Boot API an
 ## Prerequisites
 
 ### For All Platforms (Windows, Android, Web)
+
 - **Git** 2.40 or newer
 - **Node.js** 20 LTS or newer
 - **pnpm** 10 or newer (`corepack enable`, then `corepack prepare pnpm@latest --activate`)
@@ -18,12 +20,14 @@ The current migrated workflow is User Management, backed by a Spring Boot API an
 - **Docker Desktop** with Linux containers enabled, for PostgreSQL (optional - use external PostgreSQL 16+ instead if preferred)
 
 ### Additional Prerequisites for Android App
+
 - **Android SDK** (minimum API level 24, Android 6+)
 - **Gradle** 8.5 or newer (usually bundled with Android Studio)
 - **Android Studio** (recommended for building and testing)
 - **Capacitor CLI** (`npm install -g @capacitor/cli` or use `npx`)
 
 ### Additional Prerequisites for Windows Desktop App
+
 - **Windows** 7 or newer
 - **Electron** and **electron-builder** (installed via `pnpm install`)
 
@@ -68,6 +72,7 @@ The installer includes the Java API source and Compose configuration. During set
 ## Android Mobile App
 
 ### Prerequisites
+
 Ensure Android SDK and Android Studio are installed with the required API level (minimum 24).
 
 ### Build for Android
@@ -108,13 +113,13 @@ The APK file is generated in `artifacts/hrs-tech-dashboard/android/app/build/out
 
 Copy `.env.example` to `.env` when custom values are needed. The defaults are suitable for the included Docker Compose database.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `VITE_API_URL` | `http://localhost:8086` | Java API URL used by React and Electron |
-| `PORT` | `8086` | Spring Boot HTTP port |
-| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5435/hrs_tech` | PostgreSQL JDBC URL |
-| `SPRING_DATASOURCE_USERNAME` | `hrs` | PostgreSQL username |
-| `SPRING_DATASOURCE_PASSWORD` | `hrs` | PostgreSQL password |
+| Variable                     | Default                                     | Description                             |
+| ---------------------------- | ------------------------------------------- | --------------------------------------- |
+| `VITE_API_URL`               | `http://localhost:8086`                     | Java API URL used by React and Electron |
+| `PORT`                       | `8086`                                      | Spring Boot HTTP port                   |
+| `SPRING_DATASOURCE_URL`      | `jdbc:postgresql://localhost:5435/hrs_tech` | PostgreSQL JDBC URL                     |
+| `SPRING_DATASOURCE_USERNAME` | `hrs`                                       | PostgreSQL username                     |
+| `SPRING_DATASOURCE_PASSWORD` | `hrs`                                       | PostgreSQL password                     |
 
 ## Project Structure
 
@@ -144,4 +149,4 @@ The Compose stack exposes PostgreSQL on `5435`, the Java API on `8086`, and the 
 
 ## Current Scope
 
-User Management is currently connected end to end to Java and PostgreSQL. The Accounts module provides a browser-persisted prototype for supplier/vendor/client contacts, itemized invoices, quotations, purchase orders, tax invoices, GST summaries, payment alerts, and attendance-prorated salary estimates. Document forms include a live print preview, downloadable/shareable PDFs, and sequential numbers by document type and calendar year within the browser's saved records. Accounts and payroll records are not yet backed by the Java API, so document numbers are not shared across browsers or users; recorded payments do not transfer funds and GST summaries are not filed returns. The remaining dashboard modules are prototype screens and are ready for subsequent API migrations.
+User Management is currently connected end to end to Java and PostgreSQL. The Accounts module provides a browser-persisted prototype for supplier/vendor/client contacts, itemized invoices, quotations, purchase orders, tax invoices, GST summaries, payment alerts, and attendance-prorated salary estimates. Document forms include live tax and total calculations, printable previews, downloadable PDFs, and sequential numbers by document type and calendar year within the browser's saved records. Accounts and payroll are not yet backed by the Java API, so document numbers are not shared across browsers or users; recorded payments do not transfer funds and GST summaries are not filed returns. The remaining dashboard modules are prototype screens and are ready for subsequent API migrations.
