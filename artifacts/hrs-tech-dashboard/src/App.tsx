@@ -6,6 +6,7 @@ import {
   ArrowDown,
   BarChart3,
   Bell,
+  BriefcaseBusiness,
   Building2,
   Camera as CameraIcon,
   CalendarClock,
@@ -57,6 +58,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { createUser, listUsers, updateUserStatus } from "@/lib/users-api";
 import { createCamera, deleteCamera, listCameras, updateCamera, type CameraInput, type CameraRecord } from "@/lib/cameras-api";
+import AccountsPage from "@/pages/accounts";
 
 const queryClient = new QueryClient();
 const logoPath = "/hrs-tech-logo.png";
@@ -97,6 +99,7 @@ const navGroups: { label: string; items: { label: string; icon: LucideIcon; href
       { label: "Credential Management", icon: Fingerprint, href: "/credentials" },
       { label: "Access Management", icon: KeyRound, href: "/access" },
       { label: "Attendance Management", icon: ClipboardList, href: "/attendance" },
+      { label: "Accounts", icon: BriefcaseBusiness, href: "/accounts" },
       { label: "Visitor Management", icon: UsersRound, href: "/visitors" },
       { label: "Reports", icon: FileBarChart, href: "/reports" },
       { label: "Requests", icon: Archive, href: "/requests" },
@@ -149,7 +152,7 @@ function LogoMark() {
 
 function Sidebar({ compact, onClose, notify }: { compact: boolean; onClose: () => void; notify: Notify }) {
   const [location, setLocation] = useLocation();
-  const selected = location.includes("requirements") ? "Cross-Cutting Requirements" : location.includes("mobile-users") ? "Mobile Users" : location.includes("credentials") ? "Credential Management" : location.includes("access") ? "Access Management" : location.includes("attendance") ? "Attendance Management" : location.includes("visitors") ? "Visitor Management" : location.includes("reports") ? "Reports" : location.includes("requests") ? "Requests" : location.includes("analytics") ? "Dashboard Analytics" : location.includes("settings") ? "Settings" : location.includes("monitoring") ? "Real-Time Monitoring" : location.includes("cameras") ? "Camera" : location.includes("controllers") ? "Controller Management" : location.includes("areas") ? "Area Control" : location.includes("logical-areas") ? "Logical Area Control" : location.includes("alarms") ? "Alarm Management" : location.includes("users") || location === "/" ? "User Management" : "";
+  const selected = location.includes("requirements") ? "Cross-Cutting Requirements" : location.includes("mobile-users") ? "Mobile Users" : location.includes("credentials") ? "Credential Management" : location.includes("access") ? "Access Management" : location.includes("attendance") ? "Attendance Management" : location.includes("accounts") ? "Accounts" : location.includes("visitors") ? "Visitor Management" : location.includes("reports") ? "Reports" : location.includes("requests") ? "Requests" : location.includes("analytics") ? "Dashboard Analytics" : location.includes("settings") ? "Settings" : location.includes("monitoring") ? "Real-Time Monitoring" : location.includes("cameras") ? "Camera" : location.includes("controllers") ? "Controller Management" : location.includes("areas") ? "Area Control" : location.includes("logical-areas") ? "Logical Area Control" : location.includes("alarms") ? "Alarm Management" : location.includes("users") || location === "/" ? "User Management" : "";
 
   const handleUnavailable = (label: string) => {
     notify(`${label} is available in the connected operations environment.`, "info");
@@ -1176,6 +1179,7 @@ function DashboardShell() {
           <Route path="/credentials"><CredentialsPage notify={notify} /></Route>
           <Route path="/access"><AccessPage notify={notify} /></Route>
           <Route path="/attendance"><AttendancePage notify={notify} /></Route>
+          <Route path="/accounts"><AccountsPage notify={notify} /></Route>
           <Route path="/visitors"><VisitorsPage notify={notify} /></Route>
           <Route path="/reports"><ReportsSnapshotPage notify={notify} /></Route>
           <Route path="/requests"><RequestsSnapshotPage notify={notify} /></Route>
@@ -1206,7 +1210,7 @@ function RootRedirect() {
 }
 
 function App() {
-  return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}><Switch><Route path="/" component={RootRedirect} /><Route path="/users" component={DashboardShell} /><Route path="/mobile-users" component={DashboardShell} /><Route path="/credentials" component={DashboardShell} /><Route path="/access" component={DashboardShell} /><Route path="/attendance" component={DashboardShell} /><Route path="/visitors" component={DashboardShell} /><Route path="/reports" component={DashboardShell} /><Route path="/requests" component={DashboardShell} /><Route path="/analytics" component={DashboardShell} /><Route path="/settings" component={DashboardShell} /><Route path="/monitoring" component={DashboardShell} /><Route path="/cameras" component={DashboardShell} /><Route path="/controllers" component={DashboardShell} /><Route path="/areas" component={DashboardShell} /><Route path="/logical-areas" component={DashboardShell} /><Route path="/alarms" component={DashboardShell} /><Route path="/requirements" component={DashboardShell} /><Route component={DashboardShell} /></Switch></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}><Switch><Route path="/" component={RootRedirect} /><Route path="/users" component={DashboardShell} /><Route path="/mobile-users" component={DashboardShell} /><Route path="/credentials" component={DashboardShell} /><Route path="/access" component={DashboardShell} /><Route path="/attendance" component={DashboardShell} /><Route path="/accounts" component={DashboardShell} /><Route path="/visitors" component={DashboardShell} /><Route path="/reports" component={DashboardShell} /><Route path="/requests" component={DashboardShell} /><Route path="/analytics" component={DashboardShell} /><Route path="/settings" component={DashboardShell} /><Route path="/monitoring" component={DashboardShell} /><Route path="/cameras" component={DashboardShell} /><Route path="/controllers" component={DashboardShell} /><Route path="/areas" component={DashboardShell} /><Route path="/logical-areas" component={DashboardShell} /><Route path="/alarms" component={DashboardShell} /><Route path="/requirements" component={DashboardShell} /><Route component={DashboardShell} /></Switch></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>;
 }
 
 export default App;
