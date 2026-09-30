@@ -144,4 +144,4 @@ The Compose stack exposes PostgreSQL on `5435`, the Java API on `8086`, and the 
 
 ## Current Scope
 
-User Management is currently connected end to end to Java and PostgreSQL. The remaining dashboard modules are prototype screens and are ready for subsequent API migrations.
+User Management is currently connected end to end to Java and PostgreSQL. The Accounts module provides a browser-persisted prototype for supplier/vendor/client contacts, invoices, quotations, purchase orders, tax invoices, GST summaries, payment alerts, and attendance-prorated salary estimates. Accounts and payroll records are not yet backed by the Java API; recorded payments in this prototype do not transfer funds or file tax returns. The remaining dashboard modules are prototype screens and are ready for subsequent API migrations.
