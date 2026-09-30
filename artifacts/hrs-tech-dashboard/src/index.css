@@ -124,3 +124,35 @@
 @media (max-width: 767px) {
   .dashboard-shell::before { display: none; }
 }
+
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  .document-print-surface,
+  .document-print-surface * {
+    visibility: visible !important;
+  }
+  .document-preview-overlay {
+    position: absolute !important;
+    inset: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .document-print-surface {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

@@ -19,35 +19,20 @@ import {
   X,
 } from "lucide-react";
 import { z } from "zod";
+import {
+  DocumentComposer,
+  DocumentPreview,
+  type ComposedDocument,
+  type CompanyProfile,
+  type DocumentAccount,
+  type DocumentKind,
+} from "@/pages/accounts-documents";
 
 type Notify = (message: string, tone?: "success" | "warning" | "info") => void;
-type AccountKind = "Supplier" | "Vendor" | "Client";
-type DocumentKind = "Invoice" | "Quotation" | "Purchase Order" | "Tax Invoice";
+type AccountKind = DocumentAccount["kind"];
 type DocumentStatus = "Draft" | "Pending" | "Due soon" | "Paid";
-
-type AccountRecord = {
-  id: string;
-  kind: AccountKind;
-  name: string;
-  address: string;
-  email: string;
-  contact: string;
-  phone: string;
-};
-
-type LedgerDocument = {
-  id: string;
-  number: string;
-  kind: DocumentKind;
-  accountId: string;
-  title: string;
-  subtotal: number;
-  taxRate: number;
-  taxAmount: number;
-  total: number;
-  dueDate: string;
-  status: DocumentStatus;
-};
+type AccountRecord = DocumentAccount;
+type LedgerDocument = ComposedDocument;
 
 type PayrollRecord = {
   id: string;
@@ -71,6 +56,15 @@ const accountSchema = z.array(
   }),
 );
 
+const companySchema = z.object({
+  name: z.string(),
+  address: z.string(),
+  email: z.string(),
+  phone: z.string(),
+  gstin: z.string(),
+  website: z.string(),
+});
+
 const documentSchema = z.array(
   z.object({
     id: z.string(),
@@ -84,6 +78,29 @@ const documentSchema = z.array(
     total: z.number(),
     dueDate: z.string(),
     status: z.enum(["Draft", "Pending", "Due soon", "Paid"]),
+    issueDate: z.string().optional(),
+    validUntil: z.string().optional(),
+    customerReference: z.string().optional(),
+    salesperson: z.string().optional(),
+    shipDate: z.string().optional(),
+    shippingAddress: z.string().optional(),
+    shipVia: z.string().optional(),
+    fob: z.string().optional(),
+    terms: z.string().optional(),
+    comments: z.string().optional(),
+    shipping: z.number().optional(),
+    other: z.number().optional(),
+    issuer: companySchema.optional(),
+    lines: z
+      .array(
+        z.object({
+          description: z.string(),
+          quantity: z.number(),
+          unitPrice: z.number(),
+          taxable: z.boolean(),
+        }),
+      )
+      .optional(),
   }),
 );
 
@@ -98,6 +115,15 @@ const payrollSchema = z.array(
     status: z.enum(["Pending", "Paid"]),
   }),
 );
+
+const defaultCompany: CompanyProfile = {
+  name: "HRS Infotech",
+  address: "",
+  email: "",
+  phone: "",
+  gstin: "",
+  website: "",
+};
 
 const seedAccounts: AccountRecord[] = [
   {
@@ -282,6 +308,28 @@ function documentTab(kind: DocumentKind): AccountTab {
   return `${kind}s` as AccountTab;
 }
 
+function nextDocumentNumber(kind: DocumentKind, documents: LedgerDocument[]) {
+  const prefixes: Record<DocumentKind, string> = {
+    Invoice: "INV",
+    "Tax Invoice": "TAX",
+    "Purchase Order": "PO",
+    Quotation: "QUO",
+  };
+  const year = new Date().getFullYear();
+  const prefix = prefixes[kind];
+  const pattern =
+    kind === "Quotation"
+      ? new RegExp(`^(?:QUO|QT)-${year}-(\\d+)$`)
+      : new RegExp(`^${prefix}-${year}-(\\d+)$`);
+  const sequence =
+    documents.reduce((maximum, document) => {
+      if (document.kind !== kind) return maximum;
+      const match = pattern.exec(document.number);
+      return match ? Math.max(maximum, Number(match[1])) : maximum;
+    }, 0) + 1;
+  return `${prefix}-${year}-${String(sequence).padStart(4, "0")}`;
+}
+
 function statusClass(status: DocumentStatus | PayrollRecord["status"]) {
   if (status === "Paid")
     return "border-emerald-400/20 bg-emerald-400/10 text-emerald-300";
@@ -340,9 +388,15 @@ function AccountsPage({ notify }: { notify: Notify }) {
   const [payroll, setPayroll] = useState(() =>
     storedValue("hrs.accounts.payroll", payrollSchema, seedPayroll),
   );
+  const [company, setCompany] = useState(() =>
+    storedValue("hrs.accounts.company", companySchema, defaultCompany),
+  );
   const [search, setSearch] = useState("");
   const [contactOpen, setContactOpen] = useState(false);
   const [documentOpen, setDocumentOpen] = useState(false);
+  const [previewDocument, setPreviewDocument] = useState<LedgerDocument | null>(
+    null,
+  );
   const [newAccount, setNewAccount] = useState<AccountKind>("Supplier");
   const [newDocument, setNewDocument] = useState<DocumentKind>("Invoice");
 
@@ -360,6 +414,10 @@ function AccountsPage({ notify }: { notify: Notify }) {
         "hrs.accounts.payroll",
         JSON.stringify(payroll),
       );
+      window.localStorage.setItem(
+        "hrs.accounts.company",
+        JSON.stringify(company),
+      );
     } catch (error) {
       console.error("Unable to save Accounts prototype data.", error);
       notify(
@@ -367,7 +425,7 @@ function AccountsPage({ notify }: { notify: Notify }) {
         "warning",
       );
     }
-  }, [accounts, documents, payroll, notify]);
+  }, [accounts, documents, payroll, company, notify]);
 
   const accountById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account])),
@@ -455,57 +513,15 @@ function AccountsPage({ notify }: { notify: Notify }) {
     notify(`${account.kind} added to Accounts.`, "success");
   };
 
-  const persistNewDocument = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const accountId = String(form.get("accountId") ?? "");
-    const subtotal = Number(form.get("subtotal"));
-    const taxRate = Number(form.get("taxRate"));
-    const dueDate = String(form.get("dueDate") ?? "");
-    const title = String(form.get("title") ?? "").trim();
-    if (
-      !accountById.has(accountId) ||
-      !title ||
-      !Number.isFinite(subtotal) ||
-      subtotal <= 0 ||
-      !Number.isFinite(taxRate) ||
-      taxRate < 0 ||
-      !dueDate
-    ) {
-      notify(
-        "Enter a valid account, description, amount, GST rate, and due date.",
-        "warning",
-      );
-      return;
-    }
-    const prefix =
-      newDocument === "Purchase Order"
-        ? "PO"
-        : newDocument === "Quotation"
-          ? "QT"
-          : newDocument === "Tax Invoice"
-            ? "TAX"
-            : "INV";
-    const sequence =
-      documents.filter((document) => document.kind === newDocument).length + 1;
-    const taxAmount = Math.round((subtotal * taxRate) / 100);
-    const document: LedgerDocument = {
-      id: crypto.randomUUID(),
-      number: `${prefix}-${new Date().getFullYear()}-${String(sequence).padStart(4, "0")}`,
-      kind: newDocument,
-      accountId,
-      title,
-      subtotal,
-      taxRate,
-      taxAmount,
-      total: subtotal + taxAmount,
-      dueDate,
-      status: newDocument === "Quotation" ? "Draft" : "Pending",
+  const persistNewDocument = (document: LedgerDocument) => {
+    const savedDocument = {
+      ...document,
+      number: nextDocumentNumber(document.kind, documents),
     };
-    setDocuments((current) => [document, ...current]);
+    setDocuments((current) => [savedDocument, ...current]);
     setDocumentOpen(false);
-    event.currentTarget.reset();
-    notify(`${newDocument} ${document.number} created.`, "success");
+    setPreviewDocument(savedDocument);
+    notify(`${savedDocument.kind} ${savedDocument.number} created.`, "success");
   };
 
   const updateAttendance = (id: string, value: number) => {
@@ -555,155 +571,6 @@ function AccountsPage({ notify }: { notify: Notify }) {
     setAccounts((current) => current.filter((account) => account.id !== id));
     notify("Contact removed.", "success");
   };
-
-  const documentForm = documentOpen && (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-[#050a11]/75 p-4"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) setDocumentOpen(false);
-      }}
-    >
-      <form
-        onSubmit={persistNewDocument}
-        className="control-surface w-full max-w-lg rounded-[8px] p-4 shadow-2xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="accounts-document-title"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <div className="text-[9px] font-semibold tracking-[.16em] text-cyan-300">
-              NEW RECORD
-            </div>
-            <h2
-              id="accounts-document-title"
-              className="mt-1 text-[16px] font-semibold text-slate-100"
-            >
-              Create {newDocument}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={() => setDocumentOpen(false)}
-            className="rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-white"
-            aria-label="Close dialog"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <label className="mb-3 block text-[10px] text-slate-400">
-          Document type
-          <select
-            value={newDocument}
-            onChange={(event) =>
-              setNewDocument(event.target.value as DocumentKind)
-            }
-            className="mt-1.5 h-9 w-full rounded border border-slate-700 bg-[#0b1522] px-2 text-[11px] text-slate-200"
-          >
-            {(
-              ["Invoice", "Quotation", "Purchase Order", "Tax Invoice"] as const
-            ).map((kind) => (
-              <option key={kind}>{kind}</option>
-            ))}
-          </select>
-        </label>
-        {accounts.length === 0 ? (
-          <p className="rounded border border-amber-400/20 bg-amber-400/5 p-3 text-[10px] text-amber-100">
-            Add a supplier, vendor, or client contact before creating a
-            document.
-          </p>
-        ) : (
-          <>
-            <label className="mb-3 block text-[10px] text-slate-400">
-              Supplier / vendor / client
-              <select
-                required
-                name="accountId"
-                defaultValue=""
-                className="mt-1.5 h-9 w-full rounded border border-slate-700 bg-[#0b1522] px-2 text-[11px] text-slate-200"
-              >
-                <option value="" disabled>
-                  Select a contact
-                </option>
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.kind} · {account.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="mb-3 block text-[10px] text-slate-400">
-              Description
-              <input
-                required
-                name="title"
-                maxLength={120}
-                placeholder="Products or services"
-                className="mt-1.5 h-9 w-full rounded border border-slate-700 bg-[#0b1522] px-2 text-[11px] text-slate-200 placeholder:text-slate-600"
-              />
-            </label>
-            <div className="mb-3 grid grid-cols-2 gap-3">
-              <label className="text-[10px] text-slate-400">
-                Amount before GST (₹)
-                <input
-                  required
-                  name="subtotal"
-                  type="number"
-                  min="1"
-                  step="0.01"
-                  placeholder="0.00"
-                  className="mt-1.5 h-9 w-full rounded border border-slate-700 bg-[#0b1522] px-2 text-[11px] text-slate-200"
-                />
-              </label>
-              <label className="text-[10px] text-slate-400">
-                GST rate (%)
-                <input
-                  required
-                  name="taxRate"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  defaultValue="18"
-                  className="mt-1.5 h-9 w-full rounded border border-slate-700 bg-[#0b1522] px-2 text-[11px] text-slate-200"
-                />
-              </label>
-            </div>
-            <label className="mb-4 block text-[10px] text-slate-400">
-              Due date
-              <input
-                required
-                name="dueDate"
-                type="date"
-                defaultValue={new Date().toISOString().slice(0, 10)}
-                className="mt-1.5 h-9 w-full rounded border border-slate-700 bg-[#0b1522] px-2 text-[11px] text-slate-200"
-              />
-            </label>
-            <p className="mb-4 text-[9px] leading-4 text-slate-500">
-              The total includes GST calculated from the amount and rate above.
-              This prototype does not submit invoices to a tax authority.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDocumentOpen(false)}
-                className="rounded border border-slate-700 px-3 py-2 text-[10px] text-slate-300 hover:bg-slate-800"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="inline-flex items-center gap-1.5 rounded bg-cyan-400 px-3 py-2 text-[10px] font-semibold text-[#062d31] hover:bg-cyan-300"
-              >
-                <FilePlus2 size={13} />
-                Create record
-              </button>
-            </div>
-          </>
-        )}
-      </form>
-    </div>
-  );
 
   const contactForm = contactOpen && (
     <div
@@ -971,6 +838,7 @@ function AccountsPage({ notify }: { notify: Notify }) {
               documents={filteredDocuments.slice(0, 5)}
               accountById={accountById}
               onMarkPaid={markDocumentPaid}
+              onPreview={setPreviewDocument}
             />
           </section>
           <section className="control-surface overflow-hidden rounded-[7px]">
@@ -1122,6 +990,7 @@ function AccountsPage({ notify }: { notify: Notify }) {
             documents={filteredDocuments}
             accountById={accountById}
             onMarkPaid={markDocumentPaid}
+            onPreview={setPreviewDocument}
           />
         </section>
       )}
@@ -1314,7 +1183,28 @@ function AccountsPage({ notify }: { notify: Notify }) {
         </div>
       )}
       {contactForm}
-      {documentForm}
+      {documentOpen && (
+        <DocumentComposer
+          accounts={accounts}
+          company={company}
+          kind={newDocument}
+          nextNumber={nextDocumentNumber(newDocument, documents)}
+          onKindChange={setNewDocument}
+          onClose={() => setDocumentOpen(false)}
+          onSave={persistNewDocument}
+          onCompanyChange={setCompany}
+          notify={notify}
+        />
+      )}
+      {previewDocument && (
+        <DocumentPreview
+          document={previewDocument}
+          account={accountById.get(previewDocument.accountId)}
+          company={company}
+          onClose={() => setPreviewDocument(null)}
+          notify={notify}
+        />
+      )}
     </main>
   );
 }
@@ -1323,10 +1213,12 @@ function DocumentTable({
   documents,
   accountById,
   onMarkPaid,
+  onPreview,
 }: {
   documents: LedgerDocument[];
   accountById: Map<string, AccountRecord>;
   onMarkPaid: (id: string) => void;
+  onPreview: (document: LedgerDocument) => void;
 }) {
   if (documents.length === 0)
     return (
@@ -1343,7 +1235,7 @@ function DocumentTable({
             <th className="px-3 py-2.5">GST</th>
             <th className="px-3 py-2.5">TOTAL</th>
             <th className="px-3 py-2.5">STATUS</th>
-            <th className="px-3 py-2.5">ACTION</th>
+            <th className="px-3 py-2.5">ACTIONS</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800/70">
@@ -1376,21 +1268,29 @@ function DocumentTable({
                 </span>
               </td>
               <td className="px-3 py-2.5">
-                {document.status !== "Paid" && document.status !== "Draft" ? (
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={() => onMarkPaid(document.id)}
+                    onClick={() => onPreview(document)}
                     className="text-[9px] font-medium text-cyan-300 hover:text-cyan-200"
                   >
-                    Mark paid
+                    Preview
                   </button>
-                ) : document.status === "Paid" ? (
-                  <span className="inline-flex items-center gap-1 text-[9px] text-emerald-300">
-                    <Check size={12} />
-                    Paid
-                  </span>
-                ) : (
-                  <span className="text-[9px] text-slate-600">—</span>
-                )}
+                  {document.status !== "Paid" &&
+                    document.status !== "Draft" && (
+                      <button
+                        onClick={() => onMarkPaid(document.id)}
+                        className="text-[9px] font-medium text-slate-400 hover:text-emerald-300"
+                      >
+                        Mark paid
+                      </button>
+                    )}
+                  {document.status === "Paid" && (
+                    <span className="inline-flex items-center gap-1 text-[9px] text-emerald-300">
+                      <Check size={12} />
+                      Paid
+                    </span>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
