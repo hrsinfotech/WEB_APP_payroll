@@ -1,19 +1,63 @@
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
-import {
-  Download,
-  FilePlus2,
-  Printer,
-  Plus,
-  Sparkles,
-  Trash2,
-  X,
-} from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { Download, Plus, Printer, Trash2, X } from "lucide-react";
 
-export type DocumentKind =
-  "Invoice" | "Quotation" | "Purchase Order" | "Tax Invoice";
+export const accountDocumentKinds = [
+  "Invoice",
+  "Quotation",
+  "Purchase Order",
+  "Tax Invoice",
+] as const;
 
-export type DocumentAccount = {
+export type AccountDocumentKind = (typeof accountDocumentKinds)[number];
+
+export type DocumentLineItem = {
+  id: string;
+  itemCode: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  taxable: boolean;
+  taxRate: number;
+};
+
+export type AccountDocument = {
+  id: string;
+  number: string;
+  kind: AccountDocumentKind;
+  accountId: string;
+  title: string;
+  issueDate: string;
+  dueDate: string;
+  validUntil: string;
+  shipToName: string;
+  shipToAddress: string;
+  shipToContact: string;
+  salesPerson: string;
+  poNumber: string;
+  shipDate: string;
+  shipVia: string;
+  fob: string;
+  terms: string;
+  requisitioner: string;
+  shippingTerms: string;
+  notes: string;
+  termsAndConditions: string;
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  companyGstin: string;
+  lines: DocumentLineItem[];
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  shipping: number;
+  other: number;
+  total: number;
+  status: "Draft" | "Pending" | "Due soon" | "Paid";
+};
+
+export type DocumentContact = {
   id: string;
   kind: "Supplier" | "Vendor" | "Client";
   name: string;
@@ -23,589 +67,406 @@ export type DocumentAccount = {
   phone: string;
 };
 
-export type CompanyProfile = {
-  name: string;
-  address: string;
-  email: string;
-  phone: string;
-  gstin: string;
-  website: string;
+export type AccountDocumentValues = Omit<
+  AccountDocument,
+  "id" | "number" | "status"
+>;
+
+type DocumentFormProps = {
+  kind: AccountDocumentKind;
+  documents: Pick<AccountDocument, "number" | "kind" | "issueDate">[];
+  accounts: DocumentContact[];
+  companyDefaults: Pick<
+    AccountDocument,
+    | "companyName"
+    | "companyAddress"
+    | "companyPhone"
+    | "companyEmail"
+    | "companyGstin"
+  >;
+  document?: AccountDocument;
+  onCancel: () => void;
+  onSubmit: (values: AccountDocumentValues) => void;
 };
 
-export type DocumentLine = {
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  taxable: boolean;
+type DocumentPreviewProps = {
+  document: AccountDocument;
+  account?: DocumentContact;
+  onClose: () => void;
+  notify: (message: string, tone?: "success" | "warning" | "info") => void;
 };
 
-export type ComposedDocument = {
-  id: string;
-  number: string;
-  kind: DocumentKind;
-  accountId: string;
-  title: string;
-  subtotal: number;
-  taxRate: number;
-  taxAmount: number;
-  total: number;
-  dueDate: string;
-  status: "Draft" | "Pending" | "Due soon" | "Paid";
-  issueDate?: string;
-  validUntil?: string;
-  customerReference?: string;
-  salesperson?: string;
-  shipDate?: string;
-  shippingAddress?: string;
-  shipVia?: string;
-  fob?: string;
-  terms?: string;
-  comments?: string;
-  shipping?: number;
-  other?: number;
-  lines?: DocumentLine[];
-  issuer?: CompanyProfile;
-};
-
-type Notify = (message: string, tone?: "success" | "warning" | "info") => void;
-
-const kinds: DocumentKind[] = [
-  "Invoice",
-  "Quotation",
-  "Purchase Order",
-  "Tax Invoice",
-];
-
-const numberPrefixes: Record<DocumentKind, string> = {
+const prefixes: Record<AccountDocumentKind, string> = {
   Invoice: "INV",
-  Quotation: "QUO",
+  Quotation: "QT",
   "Purchase Order": "PO",
   "Tax Invoice": "TAX",
 };
 
-const defaultLine: DocumentLine = {
-  description: "",
-  quantity: 1,
-  unitPrice: 0,
-  taxable: true,
-};
-
-function localDate(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+export function nextDocumentNumber(
+  kind: AccountDocumentKind,
+  date: string,
+  documents: Pick<AccountDocument, "number" | "kind" | "issueDate">[],
+) {
+  const year = date.slice(0, 4);
+  const prefix = prefixes[kind];
+  const sequence = documents.reduce((highest, document) => {
+    const match = new RegExp(`^${prefix}-${year}-(\\d+)$`).exec(
+      document.number,
+    );
+    if (!match) return highest;
+    return Math.max(highest, Number(match[1]));
+  }, 0);
+  return `${prefix}-${year}-${String(sequence + 1).padStart(4, "0")}`;
 }
 
-function dateAfter(days: number) {
+function localDate() {
   const date = new Date();
-  date.setDate(date.getDate() + days);
-  return localDate(date);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function money(amount: number) {
+function dateLabel(value: string) {
+  if (!value) return "—";
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }).format(date);
+}
+
+function money(value: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
     minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
+  }).format(value);
 }
 
-function displayDate(value?: string) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(`${value}T00:00:00`));
+function makeLine(): DocumentLineItem {
+  return {
+    id: crypto.randomUUID(),
+    itemCode: "",
+    description: "",
+    quantity: 1,
+    unitPrice: 0,
+    taxable: true,
+    taxRate: 18,
+  };
 }
 
-export function nextDocumentNumber(
-  kind: DocumentKind,
-  documents: Pick<ComposedDocument, "kind" | "number">[],
-  year = new Date().getFullYear(),
-) {
-  const prefix = numberPrefixes[kind];
-  const pattern =
-    kind === "Quotation"
-      ? new RegExp(`^(?:QUO|QT)-${year}-(\\d+)$`)
-      : new RegExp(`^${prefix}-${year}-(\\d+)$`);
-  const next =
-    documents.reduce((max, document) => {
-      if (document.kind !== kind) return max;
-      const match = pattern.exec(document.number);
-      return match ? Math.max(max, Number(match[1])) : max;
-    }, 0) + 1;
-  return `${prefix}-${year}-${String(next).padStart(4, "0")}`;
-}
+const fieldClass =
+  "mt-1 block h-9 w-full rounded border border-slate-700 bg-[#0b1522] px-2.5 text-[11px] text-slate-200 outline-none focus:border-cyan-400";
+const fieldLabelClass = "block text-[10px] font-medium text-slate-400";
 
-const inputClass =
-  "mt-1 block h-9 w-full rounded border border-slate-700 bg-[#0b1522] px-2.5 text-[11px] text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30";
-const labelClass = "block text-[10px] font-medium text-slate-400";
-
-export function DocumentComposer({
-  accounts,
-  documents,
-  company,
-  onCompanyChange,
+export function AccountDocumentForm({
   kind,
-  onKindChange,
-  onClose,
-  onSave,
-}: {
-  accounts: DocumentAccount[];
-  documents: Pick<ComposedDocument, "kind" | "number">[];
-  company: CompanyProfile;
-  onCompanyChange: (company: CompanyProfile) => void;
-  kind: DocumentKind;
-  onKindChange: (kind: DocumentKind) => void;
-  onClose: () => void;
-  onSave: (document: ComposedDocument) => void;
-}) {
-  const [accountId, setAccountId] = useState("");
-  const [issueDate, setIssueDate] = useState(localDate());
-  const [dueDate, setDueDate] = useState(
-    dateAfter(kind === "Quotation" ? 30 : 14),
+  documents,
+  accounts,
+  companyDefaults,
+  document,
+  onCancel,
+  onSubmit,
+}: DocumentFormProps) {
+  const today = localDate();
+  const [accountId, setAccountId] = useState(
+    document?.accountId ??
+      accounts.find((account) =>
+        kind === "Purchase Order"
+          ? account.kind !== "Client"
+          : account.kind === "Client",
+      )?.id ??
+      accounts[0]?.id ??
+      "",
   );
-  const [customerReference, setCustomerReference] = useState("");
-  const [salesperson, setSalesperson] = useState("");
-  const [shipDate, setShipDate] = useState("");
-  const [shippingAddress, setShippingAddress] = useState("");
-  const [shipVia, setShipVia] = useState("");
-  const [fob, setFob] = useState("");
-  const [terms, setTerms] = useState("");
-  const [comments, setComments] = useState("");
-  const [taxRate, setTaxRate] = useState(18);
-  const [shipping, setShipping] = useState(0);
-  const [other, setOther] = useState(0);
-  const [lines, setLines] = useState<DocumentLine[]>([{ ...defaultLine }]);
-  const [error, setError] = useState("");
+  const [issueDate, setIssueDate] = useState(document?.issueDate ?? today);
+  const [title, setTitle] = useState(document?.title ?? "");
+  const [dueDate, setDueDate] = useState(document?.dueDate ?? today);
+  const [validUntil, setValidUntil] = useState(document?.validUntil ?? "");
+  const [shipToName, setShipToName] = useState(document?.shipToName ?? "");
+  const [shipToAddress, setShipToAddress] = useState(
+    document?.shipToAddress ?? "",
+  );
+  const [shipToContact, setShipToContact] = useState(
+    document?.shipToContact ?? "",
+  );
+  const [salesPerson, setSalesPerson] = useState(document?.salesPerson ?? "");
+  const [poNumber, setPoNumber] = useState(document?.poNumber ?? "");
+  const [shipDate, setShipDate] = useState(document?.shipDate ?? "");
+  const [shipVia, setShipVia] = useState(document?.shipVia ?? "");
+  const [fob, setFob] = useState(document?.fob ?? "");
+  const [terms, setTerms] = useState(document?.terms ?? "Due on receipt");
+  const [requisitioner, setRequisitioner] = useState(
+    document?.requisitioner ?? "",
+  );
+  const [shippingTerms, setShippingTerms] = useState(
+    document?.shippingTerms ?? "",
+  );
+  const [notes, setNotes] = useState(document?.notes ?? "");
+  const [termsAndConditions, setTermsAndConditions] = useState(
+    document?.termsAndConditions ??
+      "Please review the items and contact us with any questions.",
+  );
+  const [companyName, setCompanyName] = useState(
+    document?.companyName ?? companyDefaults.companyName,
+  );
+  const [companyAddress, setCompanyAddress] = useState(
+    document?.companyAddress ?? companyDefaults.companyAddress,
+  );
+  const [companyPhone, setCompanyPhone] = useState(
+    document?.companyPhone ?? companyDefaults.companyPhone,
+  );
+  const [companyEmail, setCompanyEmail] = useState(
+    document?.companyEmail ?? companyDefaults.companyEmail,
+  );
+  const [companyGstin, setCompanyGstin] = useState(
+    document?.companyGstin ?? companyDefaults.companyGstin,
+  );
+  const [shipping, setShipping] = useState(document?.shipping ?? 0);
+  const [other, setOther] = useState(document?.other ?? 0);
+  const [lines, setLines] = useState<DocumentLineItem[]>(
+    document?.lines?.length
+      ? document.lines.map((line) => ({ ...line }))
+      : [makeLine()],
+  );
+  const [showCompanyDetails, setShowCompanyDetails] = useState(false);
+  const number =
+    document?.number ?? nextDocumentNumber(kind, issueDate, documents);
 
-  const account = accounts.find((item) => item.id === accountId);
-  const subtotal = useMemo(
-    () => lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0),
-    [lines],
+  const activeAccount = accounts.find((account) => account.id === accountId);
+  const subtotal = lines.reduce(
+    (sum, line) =>
+      sum + Math.max(0, line.quantity) * Math.max(0, line.unitPrice),
+    0,
   );
-  const taxableSubtotal = useMemo(
-    () =>
-      lines
-        .filter((line) => line.taxable)
-        .reduce((sum, line) => sum + line.quantity * line.unitPrice, 0),
-    [lines],
+  const taxAmount = lines.reduce(
+    (sum, line) =>
+      sum +
+      (line.taxable
+        ? (Math.max(0, line.quantity) *
+            Math.max(0, line.unitPrice) *
+            Math.max(0, line.taxRate)) /
+          100
+        : 0),
+    0,
   );
-  const taxAmount =
-    Math.round((taxableSubtotal * taxRate + Number.EPSILON) * 100) / 100;
   const total =
-    Math.round((subtotal + taxAmount + shipping + other + Number.EPSILON) * 100) /
-    100;
-  const isPurchaseOrder = kind === "Purchase Order";
-  const isQuotation = kind === "Quotation";
-  const recipient = isPurchaseOrder ? "Vendor / supplier" : "Customer";
-  const nextNumber = nextDocumentNumber(
-    kind,
-    documents,
-    Number(issueDate.slice(0, 4)),
-  );
+    subtotal + taxAmount + Math.max(0, shipping) + Math.max(0, other);
+  const defaultShipName = shipToName || activeAccount?.name || "";
+  const defaultShipAddress = shipToAddress || activeAccount?.address || "";
+  const defaultShipContact =
+    shipToContact || activeAccount?.contact || activeAccount?.phone || "";
 
-  const changeKind = (next: DocumentKind) => {
-    onKindChange(next);
-    setDueDate(dateAfter(next === "Quotation" ? 30 : 14));
-    setAccountId("");
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeAccount || !issueDate || !title.trim() || lines.length === 0) {
+      return;
+    }
+    if (lines.some((line) => !line.description.trim() || line.quantity <= 0)) {
+      return;
+    }
+    onSubmit({
+      kind,
+      accountId,
+      title: title.trim(),
+      issueDate,
+      dueDate,
+      validUntil,
+      shipToName,
+      shipToAddress,
+      shipToContact,
+      salesPerson,
+      poNumber,
+      shipDate,
+      shipVia,
+      fob,
+      terms,
+      requisitioner,
+      shippingTerms,
+      notes,
+      termsAndConditions,
+      companyName: companyName.trim(),
+      companyAddress: companyAddress.trim(),
+      companyPhone: companyPhone.trim(),
+      companyEmail: companyEmail.trim(),
+      companyGstin: companyGstin.trim(),
+      lines: lines.map((line) => ({ ...line })),
+      subtotal: Number(subtotal.toFixed(2)),
+      taxRate:
+        subtotal === 0 ? 0 : Number(((taxAmount / subtotal) * 100).toFixed(2)),
+      taxAmount: Number(taxAmount.toFixed(2)),
+      shipping: Number(Math.max(0, shipping).toFixed(2)),
+      other: Number(Math.max(0, other).toFixed(2)),
+      total: Number(total.toFixed(2)),
+    });
   };
 
-  const updateLine = (index: number, patch: Partial<DocumentLine>) => {
+  const updateLine = (
+    id: string,
+    field: keyof DocumentLineItem,
+    value: string | number | boolean,
+  ) => {
     setLines((current) =>
-      current.map((line, row) =>
-        row === index ? { ...line, ...patch } : line,
+      current.map((line) =>
+        line.id === id ? { ...line, [field]: value } : line,
       ),
     );
   };
 
-  const saveDocument = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!account) {
-      setError(`Choose a ${recipient.toLowerCase()} from your saved contacts.`);
-      return;
-    }
-    if (lines.length === 0 || lines.some((line) => !line.description.trim())) {
-      setError("Add a description for each line item before saving.");
-      return;
-    }
-    if (
-      subtotal <= 0 ||
-      lines.some(
-        (line) =>
-          !Number.isFinite(line.quantity) ||
-          !Number.isFinite(line.unitPrice) ||
-          line.quantity <= 0 ||
-          line.unitPrice < 0,
-      )
-    ) {
-      setError("Enter a quantity above zero and a valid item price.");
-      return;
-    }
-
-    onSave({
-      id: crypto.randomUUID(),
-      number: nextNumber,
-      kind,
-      accountId,
-      title: lines[0]?.description.trim() ?? kind,
-      subtotal,
-      taxRate,
-      taxAmount,
-      total,
-      dueDate,
-      status: isQuotation ? "Draft" : "Pending",
-      issueDate,
-      validUntil: isQuotation ? dueDate : undefined,
-      customerReference,
-      salesperson,
-      shipDate,
-      shippingAddress,
-      shipVia,
-      fob,
-      terms,
-      comments,
-      shipping,
-      other,
-      lines: lines.map((line) => ({
-        ...line,
-        description: line.description.trim(),
-      })),
-      issuer: company,
-    });
-  };
-
   return (
     <div
-      className="fixed inset-0 z-[70] overflow-y-auto bg-[#050a11]/80 p-2 backdrop-blur-sm sm:p-5"
+      className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-[#050a11]/80 p-3 sm:p-6"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) onCancel();
       }}
     >
       <form
-        onSubmit={saveDocument}
-        className="mx-auto my-2 max-w-[1180px] overflow-hidden rounded-xl border border-slate-700/80 bg-[#0b1421] shadow-2xl sm:my-5"
+        onSubmit={submit}
+        className="control-surface my-auto w-full max-w-5xl rounded-[9px] shadow-2xl"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="document-composer-title"
+        aria-labelledby="accounts-document-title"
       >
-        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-800 bg-[#0b1421]/95 px-4 py-3 backdrop-blur sm:px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="hidden rounded-lg bg-cyan-400/10 p-2 text-cyan-300 sm:block">
-              <FilePlus2 size={18} />
+        <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-[9px] border-b border-slate-800 bg-[#101b2a] px-4 py-3">
+          <div>
+            <div className="text-[9px] font-semibold tracking-[.16em] text-cyan-300">
+              {document ? "EDIT DOCUMENT" : "DOCUMENT WORKSPACE"}
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1 text-[9px] font-semibold tracking-[.14em] text-cyan-300">
-                <Sparkles size={11} /> DOCUMENT STUDIO
-              </div>
-              <h2
-                id="document-composer-title"
-                className="mt-0.5 truncate text-[15px] font-semibold text-slate-100 sm:text-[17px]"
-              >
-                Create {kind}
-              </h2>
-            </div>
+            <h2
+              id="accounts-document-title"
+              className="mt-1 text-[16px] font-semibold text-slate-100"
+            >
+              {document ? `Edit ${kind}` : `Create ${kind}`}
+            </h2>
           </div>
           <button
             type="button"
-            onClick={onClose}
-            aria-label="Close document form"
-            className="rounded-md p-2 text-slate-500 hover:bg-slate-800 hover:text-slate-100"
+            onClick={onCancel}
+            className="rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-white"
+            aria-label="Close dialog"
           >
-            <X size={17} />
+            <X size={16} />
           </button>
-        </header>
+        </div>
 
-        <div className="grid gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,.85fr)]">
+        <div className="grid gap-5 p-4 lg:grid-cols-[1.2fr_.8fr]">
           <div className="space-y-4">
-            <section className="rounded-lg border border-slate-800 bg-[#101b2a] p-3.5 sm:p-4">
-              <h3 className="text-[11px] font-semibold text-slate-200">
-                Your business
-              </h3>
-              <p className="mb-3 mt-0.5 text-[9px] text-slate-500">
-                These details are saved and printed as your company header.
-              </p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className={labelClass}>
-                  Company name
-                  <input
-                    required
-                    value={company.name}
-                    onChange={(event) =>
-                      onCompanyChange({ ...company, name: event.target.value })
-                    }
-                    maxLength={140}
-                    className={inputClass}
-                  />
-                </label>
-                <label className={labelClass}>
-                  GSTIN
-                  <input
-                    value={company.gstin}
-                    onChange={(event) =>
-                      onCompanyChange({ ...company, gstin: event.target.value })
-                    }
-                    maxLength={20}
-                    placeholder="Optional"
-                    className={inputClass}
-                  />
-                </label>
-                <label className={labelClass}>
-                  Address
-                  <input
-                    value={company.address}
-                    onChange={(event) =>
-                      onCompanyChange({
-                        ...company,
-                        address: event.target.value,
-                      })
-                    }
-                    maxLength={240}
-                    placeholder="Business address"
-                    className={inputClass}
-                  />
-                </label>
-                <label className={labelClass}>
-                  Email
-                  <input
-                    type="email"
-                    value={company.email}
-                    onChange={(event) =>
-                      onCompanyChange({ ...company, email: event.target.value })
-                    }
-                    maxLength={160}
-                    placeholder="accounts@company.com"
-                    className={inputClass}
-                  />
-                </label>
-                <label className={labelClass}>
-                  Phone
-                  <input
-                    type="tel"
-                    value={company.phone}
-                    onChange={(event) =>
-                      onCompanyChange({ ...company, phone: event.target.value })
-                    }
-                    maxLength={40}
-                    placeholder="+91"
-                    className={inputClass}
-                  />
-                </label>
-                <label className={labelClass}>
-                  Website
-                  <input
-                    value={company.website}
-                    onChange={(event) =>
-                      onCompanyChange({
-                        ...company,
-                        website: event.target.value,
-                      })
-                    }
-                    maxLength={160}
-                    placeholder="www.company.com"
-                    className={inputClass}
-                  />
-                </label>
-              </div>
-            </section>
-            <section className="rounded-lg border border-slate-800 bg-[#101b2a] p-3.5 sm:p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <h3 className="text-[11px] font-semibold text-slate-200">
-                    Document details
-                  </h3>
-                  <p className="mt-0.5 text-[9px] text-slate-500">
-                    Numbered automatically by type and calendar year.
-                  </p>
-                </div>
-                <span className="rounded-md border border-cyan-400/20 bg-cyan-400/[.07] px-2 py-1 font-mono text-[10px] font-medium text-cyan-200">
-                  {nextNumber}
-                </span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className={labelClass}>
-                  Document type
-                  <select
-                    value={kind}
-                    onChange={(event) =>
-                      changeKind(event.target.value as DocumentKind)
-                    }
-                    className={inputClass}
-                  >
-                    {kinds.map((item) => (
-                      <option key={item}>{item}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className={labelClass}>
-                  {recipient}
-                  <select
-                    required
-                    value={accountId}
-                    onChange={(event) => {
-                      setAccountId(event.target.value);
-                      const selected = accounts.find(
-                        (item) => item.id === event.target.value,
-                      );
-                      setShippingAddress(selected?.address ?? "");
-                    }}
-                    className={inputClass}
-                  >
-                    <option value="">Select a saved contact</option>
-                    {accounts
-                      .filter((item) =>
-                        isPurchaseOrder
-                          ? item.kind !== "Client"
-                          : item.kind === "Client",
-                      )
-                      .map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} · {item.kind}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label className={labelClass}>
-                  Issue date
-                  <input
-                    required
-                    type="date"
-                    value={issueDate}
-                    onChange={(event) => setIssueDate(event.target.value)}
-                    className={inputClass}
-                  />
-                </label>
-                <label className={labelClass}>
-                  {isQuotation ? "Valid until" : "Due date"}
-                  <input
-                    required
-                    type="date"
-                    value={dueDate}
-                    onChange={(event) => setDueDate(event.target.value)}
-                    className={inputClass}
-                  />
-                </label>
-                <label className={labelClass}>
-                  {isPurchaseOrder
-                    ? "Requisition / reference"
-                    : "Customer reference"}
-                  <input
-                    value={customerReference}
-                    onChange={(event) =>
-                      setCustomerReference(event.target.value)
-                    }
-                    placeholder="Optional reference number"
-                    maxLength={80}
-                    className={inputClass}
-                  />
-                </label>
-                <label className={labelClass}>
-                  {isPurchaseOrder
-                    ? "Requested by"
-                    : "Prepared by / salesperson"}
-                  <input
-                    value={salesperson}
-                    onChange={(event) => setSalesperson(event.target.value)}
-                    placeholder="Optional"
-                    maxLength={100}
-                    className={inputClass}
-                  />
-                </label>
-                {(kind === "Invoice" ||
-                  kind === "Purchase Order" ||
-                  kind === "Tax Invoice") && (
-                  <label className={labelClass}>
-                    Ship date
-                    <input
-                      type="date"
-                      value={shipDate}
-                      onChange={(event) => setShipDate(event.target.value)}
-                      className={inputClass}
-                    />
-                  </label>
-                )}
-                {(kind === "Invoice" ||
-                  kind === "Purchase Order" ||
-                  kind === "Tax Invoice") && (
-                  <label className={labelClass}>
-                    Ship via
-                    <input
-                      value={shipVia}
-                      onChange={(event) => setShipVia(event.target.value)}
-                      placeholder="Carrier / delivery method"
-                      maxLength={100}
-                      className={inputClass}
-                    />
-                  </label>
-                )}
-                {isPurchaseOrder && (
-                  <label className={labelClass}>
-                    FOB / delivery terms
-                    <input
-                      value={fob}
-                      onChange={(event) => setFob(event.target.value)}
-                      placeholder="Optional"
-                      maxLength={100}
-                      className={inputClass}
-                    />
-                  </label>
-                )}
-              </div>
-              <label className={`${labelClass} mt-3`}>
-                Ship-to address
+            <section className="grid gap-3 rounded border border-slate-800 bg-[#0d1725] p-3 sm:grid-cols-2">
+              <label className={fieldLabelClass}>
+                Document number
                 <input
-                  value={shippingAddress}
-                  onChange={(event) => setShippingAddress(event.target.value)}
-                  placeholder="Enter delivery address"
-                  maxLength={240}
-                  className={inputClass}
+                  value={document?.number ?? number}
+                  readOnly
+                  className={`${fieldClass} mono cursor-not-allowed font-semibold text-cyan-200`}
+                />
+              </label>
+              <label className={fieldLabelClass}>
+                Document date
+                <input
+                  required
+                  type="date"
+                  value={issueDate}
+                  onChange={(event) => setIssueDate(event.target.value)}
+                  className={fieldClass}
+                />
+              </label>
+              <label className={fieldLabelClass}>
+                {kind === "Purchase Order"
+                  ? "Vendor / supplier"
+                  : "Bill to / customer"}
+                <select
+                  required
+                  value={accountId}
+                  onChange={(event) => setAccountId(event.target.value)}
+                  className={fieldClass}
+                >
+                  <option value="" disabled>
+                    Select an account
+                  </option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.kind} · {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={fieldLabelClass}>
+                {kind === "Purchase Order" ? "Required by" : "Due date"}
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(event) => setDueDate(event.target.value)}
+                  className={fieldClass}
+                />
+              </label>
+              <label className={`${fieldLabelClass} sm:col-span-2`}>
+                Subject / project
+                <input
+                  required
+                  maxLength={120}
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="Project or service description"
+                  className={fieldClass}
                 />
               </label>
             </section>
 
-            <section className="rounded-lg border border-slate-800 bg-[#101b2a] p-3.5 sm:p-4">
-              <div className="mb-3 flex items-center justify-between gap-2">
+            <section className="rounded border border-slate-800 bg-[#0d1725] p-3">
+              <div className="mb-2 flex items-center justify-between">
                 <div>
                   <h3 className="text-[11px] font-semibold text-slate-200">
                     Items and services
                   </h3>
-                  <p className="mt-0.5 text-[9px] text-slate-500">
-                    Add products or services and their quantity and unit price.
+                  <p className="mt-0.5 text-[9px] text-slate-600">
+                    Add line items; taxable rows calculate GST automatically.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() =>
-                    setLines((current) => [...current, { ...defaultLine }])
+                    setLines((current) => [...current, makeLine()])
                   }
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-700 px-2.5 py-1.5 text-[9px] font-medium text-slate-200 hover:border-cyan-400/50 hover:text-cyan-200"
+                  className="inline-flex items-center gap-1 rounded border border-cyan-400/30 px-2 py-1.5 text-[9px] font-medium text-cyan-200 hover:bg-cyan-400/10"
                 >
-                  <Plus size={12} /> Add item
+                  <Plus size={12} />
+                  Add item
                 </button>
               </div>
               <div className="space-y-2">
                 {lines.map((line, index) => (
                   <div
-                    key={index}
-                    className="grid grid-cols-[minmax(0,1fr)_64px_88px_28px] items-end gap-2 rounded-md border border-slate-800 bg-[#0b1522] p-2 sm:grid-cols-[minmax(0,1fr)_76px_112px_78px_30px]"
+                    key={line.id}
+                    className="grid gap-2 rounded border border-slate-800/80 bg-[#0a1421] p-2 sm:grid-cols-[1fr_2fr_76px_100px_82px_32px]"
                   >
-                    <label className={labelClass}>
+                    <label className={fieldLabelClass}>
+                      Item / SKU
+                      <input
+                        value={line.itemCode}
+                        maxLength={40}
+                        onChange={(event) =>
+                          updateLine(line.id, "itemCode", event.target.value)
+                        }
+                        placeholder="Optional"
+                        className={fieldClass}
+                      />
+                    </label>
+                    <label className={fieldLabelClass}>
                       Description
                       <input
                         required
                         value={line.description}
+                        maxLength={160}
                         onChange={(event) =>
-                          updateLine(index, { description: event.target.value })
+                          updateLine(line.id, "description", event.target.value)
                         }
-                        placeholder="Product or service"
-                        maxLength={140}
-                        className={inputClass}
+                        placeholder={`Item ${index + 1}`}
+                        className={fieldClass}
                       />
                     </label>
-                    <label className={labelClass}>
+                    <label className={fieldLabelClass}>
                       Qty
                       <input
                         required
@@ -614,88 +475,214 @@ export function DocumentComposer({
                         step="0.01"
                         value={line.quantity}
                         onChange={(event) =>
-                          updateLine(index, {
-                            quantity: Number(event.target.value),
-                          })
+                          updateLine(
+                            line.id,
+                            "quantity",
+                            Number(event.target.value),
+                          )
                         }
-                        className={inputClass}
+                        className={fieldClass}
                       />
                     </label>
-                    <label className={labelClass}>
-                      Unit price
+                    <label className={fieldLabelClass}>
+                      Unit price (₹)
                       <input
                         required
                         type="number"
                         min="0"
                         step="0.01"
-                        value={line.unitPrice || ""}
+                        value={line.unitPrice}
                         onChange={(event) =>
-                          updateLine(index, {
-                            unitPrice: Number(event.target.value),
-                          })
+                          updateLine(
+                            line.id,
+                            "unitPrice",
+                            Number(event.target.value),
+                          )
                         }
-                        placeholder="₹ 0.00"
-                        className={inputClass}
+                        className={fieldClass}
                       />
                     </label>
-                    <label className="hidden items-center gap-1.5 pb-2 text-[9px] text-slate-400 sm:flex">
+                    <label className={fieldLabelClass}>
+                      GST %
                       <input
-                        type="checkbox"
-                        checked={line.taxable}
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={line.taxRate}
+                        disabled={!line.taxable}
                         onChange={(event) =>
-                          updateLine(index, { taxable: event.target.checked })
+                          updateLine(
+                            line.id,
+                            "taxRate",
+                            Number(event.target.value),
+                          )
                         }
-                        className="accent-cyan-400"
+                        className={fieldClass}
                       />
-                      Taxable
                     </label>
-                    <button
-                      type="button"
-                      disabled={lines.length === 1}
-                      onClick={() =>
-                        setLines((current) =>
-                          current.filter((_, row) => row !== index),
-                        )
-                      }
-                      aria-label={`Remove item ${index + 1}`}
-                      className="mb-1 rounded p-1.5 text-slate-600 hover:bg-rose-400/10 hover:text-rose-300 disabled:opacity-30"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                    <label className="col-span-4 flex items-center gap-1.5 text-[9px] text-slate-400 sm:hidden">
-                      <input
-                        type="checkbox"
-                        checked={line.taxable}
-                        onChange={(event) =>
-                          updateLine(index, { taxable: event.target.checked })
+                    <div className="flex items-end justify-center gap-1">
+                      <label
+                        className="flex h-9 items-center gap-1 text-[9px] text-slate-500"
+                        title="Apply GST to this item"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={line.taxable}
+                          onChange={(event) =>
+                            updateLine(line.id, "taxable", event.target.checked)
+                          }
+                          aria-label={`GST taxable item ${index + 1}`}
+                        />
+                        GST
+                      </label>
+                      <button
+                        type="button"
+                        disabled={lines.length === 1}
+                        onClick={() =>
+                          setLines((current) =>
+                            current.filter((item) => item.id !== line.id),
+                          )
                         }
-                        className="accent-cyan-400"
-                      />
-                      Include this item in GST calculation
-                    </label>
+                        className="mb-2 rounded p-1 text-slate-600 hover:bg-rose-400/10 hover:text-rose-300 disabled:opacity-30"
+                        aria-label={`Remove item ${index + 1}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <div className="text-right text-[9px] text-slate-500 sm:col-span-6">
+                      Line total:{" "}
+                      <span className="font-semibold text-slate-200">
+                        {money(line.quantity * line.unitPrice)}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
             </section>
 
-            <section className="rounded-lg border border-slate-800 bg-[#101b2a] p-3.5 sm:p-4">
-              <h3 className="mb-3 text-[11px] font-semibold text-slate-200">
-                Notes and charges
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className={labelClass}>
-                  GST / tax rate (%)
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={taxRate}
-                    onChange={(event) => setTaxRate(Number(event.target.value))}
-                    className={inputClass}
+            <section className="grid gap-3 rounded border border-slate-800 bg-[#0d1725] p-3 sm:grid-cols-2">
+              {kind === "Purchase Order" ? (
+                <>
+                  <TextField
+                    label="Requisitioner"
+                    value={requisitioner}
+                    onChange={setRequisitioner}
                   />
-                </label>
-                <label className={labelClass}>
+                  <TextField
+                    label="Ship via"
+                    value={shipVia}
+                    onChange={setShipVia}
+                  />
+                  <TextField label="FOB" value={fob} onChange={setFob} />
+                  <TextField
+                    label="Shipping terms"
+                    value={shippingTerms}
+                    onChange={setShippingTerms}
+                  />
+                  <TextField
+                    label="Ship date"
+                    type="date"
+                    value={shipDate}
+                    onChange={setShipDate}
+                  />
+                </>
+              ) : (
+                <>
+                  <TextField
+                    label="Ship to name"
+                    value={shipToName}
+                    onChange={setShipToName}
+                    placeholder={activeAccount?.name}
+                  />
+                  <TextField
+                    label="Ship to contact / phone"
+                    value={shipToContact}
+                    onChange={setShipToContact}
+                    placeholder={activeAccount?.contact || activeAccount?.phone}
+                  />
+                  <TextField
+                    label="Ship to address"
+                    value={shipToAddress}
+                    onChange={setShipToAddress}
+                    placeholder={activeAccount?.address}
+                  />
+                  <TextField
+                    label="Salesperson"
+                    value={salesPerson}
+                    onChange={setSalesPerson}
+                  />
+                </>
+              )}
+              {kind === "Quotation" && (
+                <>
+                  <TextField
+                    label="Valid until"
+                    type="date"
+                    value={validUntil}
+                    onChange={setValidUntil}
+                  />
+                  <TextField
+                    label="Customer PO number"
+                    value={poNumber}
+                    onChange={setPoNumber}
+                  />
+                </>
+              )}
+              {kind === "Invoice" || kind === "Tax Invoice" ? (
+                <>
+                  <TextField
+                    label="Customer PO number"
+                    value={poNumber}
+                    onChange={setPoNumber}
+                  />
+                  <TextField
+                    label="Ship date"
+                    type="date"
+                    value={shipDate}
+                    onChange={setShipDate}
+                  />
+                  <TextField
+                    label="Ship via"
+                    value={shipVia}
+                    onChange={setShipVia}
+                  />
+                  <TextField label="FOB" value={fob} onChange={setFob} />
+                  <TextField
+                    label="Payment terms"
+                    value={terms}
+                    onChange={setTerms}
+                  />
+                </>
+              ) : null}
+              <label className={`${fieldLabelClass} sm:col-span-2`}>
+                {kind === "Quotation"
+                  ? "Terms and conditions"
+                  : "Comments / special instructions"}
+                <textarea
+                  value={kind === "Quotation" ? termsAndConditions : notes}
+                  onChange={(event) =>
+                    kind === "Quotation"
+                      ? setTermsAndConditions(event.target.value)
+                      : setNotes(event.target.value)
+                  }
+                  rows={3}
+                  maxLength={1000}
+                  className="mt-1 block w-full rounded border border-slate-700 bg-[#0b1522] p-2.5 text-[10px] text-slate-200 outline-none focus:border-cyan-400"
+                />
+              </label>
+            </section>
+          </div>
+
+          <aside className="space-y-3">
+            <section className="rounded border border-cyan-400/20 bg-cyan-400/[.04] p-3">
+              <h3 className="text-[11px] font-semibold text-slate-100">
+                Live total
+              </h3>
+              <div className="mt-3 space-y-2 text-[10px]">
+                <AmountRow label="Subtotal" value={money(subtotal)} />
+                <AmountRow label="GST" value={money(taxAmount)} />
+                <label className="grid grid-cols-[1fr_110px] items-center gap-2 text-slate-500">
                   Shipping (₹)
                   <input
                     type="number"
@@ -705,168 +692,180 @@ export function DocumentComposer({
                     onChange={(event) =>
                       setShipping(Number(event.target.value))
                     }
-                    className={inputClass}
+                    className="h-8 rounded border border-slate-700 bg-[#0b1522] px-2 text-right text-slate-200"
                   />
                 </label>
-                <label className={labelClass}>
-                  Other charges (₹)
+                <label className="grid grid-cols-[1fr_110px] items-center gap-2 text-slate-500">
+                  Other (₹)
                   <input
                     type="number"
                     min="0"
                     step="0.01"
                     value={other}
                     onChange={(event) => setOther(Number(event.target.value))}
-                    className={inputClass}
+                    className="h-8 rounded border border-slate-700 bg-[#0b1522] px-2 text-right text-slate-200"
                   />
                 </label>
-                <label className={labelClass}>
-                  Terms
-                  <input
-                    value={terms}
-                    onChange={(event) => setTerms(event.target.value)}
-                    placeholder="Payment, delivery, or quote terms"
-                    maxLength={180}
-                    className={inputClass}
-                  />
-                </label>
-              </div>
-              <label className={`${labelClass} mt-3`}>
-                Special instructions
-                <textarea
-                  rows={2}
-                  value={comments}
-                  onChange={(event) => setComments(event.target.value)}
-                  placeholder="Add a note for the customer or supplier"
-                  maxLength={500}
-                  className="mt-1 block w-full resize-y rounded border border-slate-700 bg-[#0b1522] px-2.5 py-2 text-[11px] text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30"
-                />
-              </label>
-            </section>
-          </div>
-
-          <aside className="space-y-3 lg:sticky lg:top-[78px] lg:self-start">
-            <section className="overflow-hidden rounded-lg border border-slate-700/80 bg-[#111e2e]">
-              <div className="flex items-center justify-between border-b border-slate-800 px-3.5 py-3">
-                <div>
-                  <h3 className="text-[11px] font-semibold text-slate-100">
-                    Live total
-                  </h3>
-                  <p className="mt-0.5 text-[9px] text-slate-500">
-                    Updates as you edit items and tax.
-                  </p>
-                </div>
-                <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[8px] font-semibold text-emerald-300">
-                  LIVE
-                </span>
-              </div>
-              <div className="space-y-2 p-3.5 text-[10px]">
-                <AmountRow label="Subtotal" value={money(subtotal)} />
-                <AmountRow
-                  label={`GST · ${taxRate || 0}%`}
-                  value={money(taxAmount)}
-                />
-                <AmountRow label="Shipping" value={money(shipping)} />
-                <AmountRow label="Other" value={money(other)} />
-                <div className="my-2 border-t border-slate-700" />
-                <div className="flex items-center justify-between text-[12px] font-semibold text-slate-100">
+                <div className="flex justify-between border-t border-slate-700 pt-2 text-[13px] font-bold text-cyan-200">
                   <span>Total</span>
                   <span>{money(total)}</span>
                 </div>
               </div>
             </section>
-            <section className="rounded-lg border border-slate-800 bg-[#101b2a] p-3.5">
-              <h3 className="mb-2 text-[10px] font-semibold text-slate-200">
-                Before you save
-              </h3>
-              <ul className="space-y-1.5 text-[9px] leading-4 text-slate-500">
-                <li>
-                  ✓ Number is generated for{" "}
-                  {new Date(issueDate || localDate()).getFullYear()} and
-                  increases per document type.
-                </li>
-                <li>
-                  ✓ Contact and item details appear on your printable document.
-                </li>
-                <li>
-                  ✓ GST is estimated from taxable items; verify applicable tax
-                  rules.
-                </li>
-              </ul>
-            </section>
-            {error && (
-              <p
-                role="alert"
-                className="rounded-md border border-rose-400/20 bg-rose-400/[.07] px-3 py-2 text-[10px] text-rose-200"
+
+            <section className="rounded border border-slate-800 bg-[#0d1725] p-3">
+              <button
+                type="button"
+                onClick={() => setShowCompanyDetails((visible) => !visible)}
+                className="flex w-full items-center justify-between text-left text-[10px] font-semibold text-slate-200"
               >
-                {error}
-              </p>
+                Your company details
+                <span className="text-[9px] font-normal text-cyan-300">
+                  {showCompanyDetails ? "Hide" : "Edit"}
+                </span>
+              </button>
+              {showCompanyDetails && (
+                <div className="mt-3 space-y-2.5">
+                  <TextField
+                    label="Company name"
+                    value={companyName}
+                    onChange={setCompanyName}
+                    required
+                  />
+                  <TextField
+                    label="Street / city / postal address"
+                    value={companyAddress}
+                    onChange={setCompanyAddress}
+                  />
+                  <TextField
+                    label="Phone"
+                    value={companyPhone}
+                    onChange={setCompanyPhone}
+                  />
+                  <TextField
+                    label="Email"
+                    type="email"
+                    value={companyEmail}
+                    onChange={setCompanyEmail}
+                  />
+                  <TextField
+                    label="GSTIN"
+                    value={companyGstin}
+                    onChange={setCompanyGstin}
+                  />
+                </div>
+              )}
+              {!showCompanyDetails && (
+                <p className="mt-2 text-[9px] leading-4 text-slate-500">
+                  {companyName || "Company name"} · Edit to add address, phone,
+                  email, and GSTIN to the printed document.
+                </p>
+              )}
+            </section>
+
+            {kind !== "Purchase Order" && (
+              <section className="rounded border border-slate-800 bg-[#0d1725] p-3">
+                <h3 className="text-[10px] font-semibold text-slate-200">
+                  Ship to
+                </h3>
+                <p className="mt-2 text-[9px] leading-4 text-slate-500">
+                  {defaultShipName || "Same as selected account"}
+                  <br />
+                  {defaultShipAddress || "Address not provided"}
+                  <br />
+                  {defaultShipContact || "Contact not provided"}
+                </p>
+              </section>
             )}
           </aside>
         </div>
-        <footer className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-slate-800 bg-[#0b1421]/95 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-2 rounded-b-[9px] border-t border-slate-800 bg-[#101b2a] px-4 py-3">
           <p className="text-[9px] text-slate-600">
-            Preview, print, or save as PDF after creating this document.
+            GST totals are estimates; verify tax treatment before issuing.
           </p>
-          <div className="flex justify-end gap-2">
+          <div className="flex gap-2">
             <button
               type="button"
-              onClick={onClose}
-              className="rounded-md border border-slate-700 px-3 py-2 text-[10px] text-slate-300 hover:bg-slate-800"
+              onClick={onCancel}
+              className="rounded border border-slate-700 px-3 py-2 text-[10px] text-slate-300 hover:bg-slate-800"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="inline-flex items-center gap-1.5 rounded-md bg-cyan-400 px-3.5 py-2 text-[10px] font-semibold text-[#062d31] hover:bg-cyan-300"
+              className="rounded bg-cyan-400 px-4 py-2 text-[10px] font-semibold text-[#062d31] hover:bg-cyan-300"
             >
-              <FilePlus2 size={13} /> Create {kind}
+              {document ? "Save changes" : `Create ${kind}`}
             </button>
           </div>
-        </footer>
+        </div>
       </form>
     </div>
   );
 }
 
+function TextField({
+  label,
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  placeholder?: string;
+  required?: boolean;
+}) {
+  return (
+    <label className={fieldLabelClass}>
+      {label}
+      <input
+        required={required}
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className={fieldClass}
+      />
+    </label>
+  );
+}
+
 function AmountRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between text-slate-400">
+    <div className="flex justify-between text-slate-500">
       <span>{label}</span>
-      <span className="font-medium text-slate-200">{value}</span>
+      <span className="text-slate-200">{value}</span>
     </div>
   );
 }
 
-export function DocumentPreview({
+export function AccountDocumentPreview({
   document,
   account,
-  company,
   onClose,
   notify,
-}: {
-  document: ComposedDocument;
-  account?: DocumentAccount;
-  company: CompanyProfile;
-  onClose: () => void;
-  notify: Notify;
-}) {
+}: DocumentPreviewProps) {
   const [downloading, setDownloading] = useState(false);
-  useEffect(() => {
-    window.document.body.classList.add("document-printing");
-    return () => window.document.body.classList.remove("document-printing");
-  }, []);
-  const lines = document.lines?.length
-    ? document.lines
-    : [
-        {
-          description: document.title,
-          quantity: 1,
-          unitPrice: document.subtotal,
-          taxable: true,
-        },
-      ];
-  const isPo = document.kind === "Purchase Order";
-  const isQuote = document.kind === "Quotation";
+  const subtotal =
+    document.lines?.reduce(
+      (sum, line) => sum + line.quantity * line.unitPrice,
+      0,
+    ) ?? document.subtotal;
+  const tax =
+    document.lines?.reduce(
+      (sum, line) =>
+        sum +
+        (line.taxable
+          ? (line.quantity * line.unitPrice * line.taxRate) / 100
+          : 0),
+      0,
+    ) ?? document.taxAmount;
+  const billName = account?.name ?? "Account";
+  const billAddress = account?.address ?? "";
 
   const downloadPdf = async () => {
     if (downloading) return;
@@ -874,211 +873,373 @@ export function DocumentPreview({
     try {
       const { jsPDF } = await import("jspdf");
       const pdf = new jsPDF({ unit: "mm", format: "a4" });
-      const width = pdf.internal.pageSize.getWidth();
-      const height = pdf.internal.pageSize.getHeight();
-      const margin = 15;
-      const right = width - margin;
-      const navy: [number, number, number] = [30, 58, 100];
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 16;
+      const right = pageWidth - margin;
+      const navy: [number, number, number] = [30, 58, 110];
       const ink: [number, number, number] = [31, 41, 55];
-      const gray: [number, number, number] = [100, 116, 139];
-      let y = margin;
-      const text = (
+      const muted: [number, number, number] = [100, 116, 139];
+      let y = 18;
+
+      const write = (
         value: string,
         x: number,
         top: number,
         maxWidth: number,
-        size = 9,
+        size = 8,
         bold = false,
         color: [number, number, number] = ink,
+        align: "left" | "right" = "left",
       ) => {
         pdf.setFont("helvetica", bold ? "bold" : "normal");
         pdf.setFontSize(size);
-        pdf.setTextColor(...color);
-        const wrapped = pdf.splitTextToSize(value || "—", maxWidth) as string[];
-        pdf.text(wrapped, x, top);
-        return Math.max(5, wrapped.length * size * 0.42);
+        pdf.setTextColor(color[0], color[1], color[2]);
+        const lines = pdf.splitTextToSize(value || "—", maxWidth) as string[];
+        pdf.text(lines, x, top, { align });
+        return top + Math.max(lines.length, 1) * (size * 0.48);
       };
 
-      text(company.name || "Your company", margin, y + 7, 100, 18, true, navy);
-      let companyY = y + 13;
-      for (const line of [
-        company.address,
-        company.gstin && `GSTIN: ${company.gstin}`,
-        company.email,
-        company.phone,
-        company.website,
-      ].filter(Boolean) as string[]) {
-        companyY += text(line, margin, companyY, 85, 8, false, gray) + 1;
+      const title =
+        document.kind === "Purchase Order"
+          ? "PURCHASE ORDER"
+          : document.kind === "Quotation"
+            ? "QUOTATION"
+            : document.kind.toUpperCase();
+      y = write(
+        document.companyName || "Company Name",
+        margin,
+        y,
+        95,
+        17,
+        true,
+        navy,
+      );
+      if (document.companyAddress) {
+        y = write(document.companyAddress, margin, y + 2, 90, 8, false, muted);
       }
-      text(document.kind.toUpperCase(), right - 75, y + 8, 75, 17, true, navy);
-      let metaY = y + 16;
-      const meta: [string, string][] = [
-        ["DOCUMENT NO.", document.number],
-        ["ISSUE DATE", displayDate(document.issueDate)],
-        [
-          isQuote ? "VALID UNTIL" : isPo ? "SHIP DATE" : "DUE DATE",
-          displayDate(
-            isQuote
-              ? document.validUntil
-              : isPo
-                ? document.shipDate
-                : document.dueDate,
-          ),
-        ],
-      ];
-      if (document.customerReference) {
-        meta.push(["REFERENCE", document.customerReference]);
+      const contactLine = [document.companyPhone, document.companyEmail]
+        .filter(Boolean)
+        .join("  ·  ");
+      if (contactLine)
+        y = write(contactLine, margin, y + 1, 90, 8, false, muted);
+      if (document.companyGstin) {
+        y = write(
+          `GSTIN: ${document.companyGstin}`,
+          margin,
+          y + 1,
+          90,
+          8,
+          false,
+          muted,
+        );
       }
-      for (const [label, value] of meta) {
-        text(label, right - 75, metaY, 29, 7, true, gray);
-        text(value, right - 44, metaY, 44, 8, true, ink);
-        metaY += 6;
+      write(title, right, 23, 90, 18, true, navy, "right");
+      write(document.number, right, 31, 90, 10, true, ink, "right");
+      write(
+        `DATE  ${dateLabel(document.issueDate)}`,
+        right,
+        37,
+        90,
+        8,
+        false,
+        muted,
+        "right",
+      );
+      if (document.kind === "Quotation") {
+        write(
+          `VALID UNTIL  ${dateLabel(document.validUntil)}`,
+          right,
+          42,
+          90,
+          8,
+          false,
+          muted,
+          "right",
+        );
+      } else {
+        write(
+          `DUE DATE  ${dateLabel(document.dueDate)}`,
+          right,
+          42,
+          90,
+          8,
+          false,
+          muted,
+          "right",
+        );
       }
-      y = Math.max(companyY, metaY) + 7;
+      y = Math.max(y, 49);
       pdf.setDrawColor(203, 213, 225);
       pdf.line(margin, y, right, y);
       y += 7;
 
-      const gap = 8;
-      const cardWidth = (width - margin * 2 - gap) / 2;
-      const card = (label: string, x: number, top: number) => {
+      const address = (
+        label: string,
+        name: string,
+        details: string[],
+        x: number,
+      ) => {
         pdf.setFillColor(...navy);
-        pdf.roundedRect(x, top, cardWidth, 7, 1, 1, "F");
-        text(label, x + 2, top + 4.8, cardWidth - 4, 7, true, [255, 255, 255]);
+        pdf.roundedRect(x, y, 85, 7, 1, 1, "F");
+        write(label, x + 2, y + 4.8, 80, 7, true, [255, 255, 255]);
+        let addressY = y + 13;
+        for (const line of [name, ...details].filter(Boolean)) {
+          addressY =
+            write(line, x + 2, addressY, 80, 8, line === name, ink) + 1;
+        }
+        return addressY;
       };
-      card(isPo ? "VENDOR" : isQuote ? "CUSTOMER" : "BILL TO", margin, y);
-      card(isQuote ? "PREPARED BY" : "SHIP TO", margin + cardWidth + gap, y);
-      let leftY = y + 12;
-      for (const line of [
-        account?.name,
-        account?.contact && `Attn: ${account.contact}`,
-        account?.address,
-        account?.email,
-        account?.phone,
-      ].filter(Boolean) as string[]) {
-        leftY += text(line, margin + 2, leftY, cardWidth - 4, 8) + 1;
-      }
-      let rightY = y + 12;
-      for (const line of [
-        ...(isQuote
-          ? [document.salesperson || company.name, company.email, company.phone]
-          : [
-              document.shippingAddress ||
-                (isPo ? company.address : account?.address),
-              document.shipVia && `Ship via: ${document.shipVia}`,
-              document.fob && `FOB: ${document.fob}`,
-            ]),
-      ].filter(Boolean) as string[]) {
-        rightY +=
-          text(line, margin + cardWidth + gap + 2, rightY, cardWidth - 4, 8) +
-          1;
-      }
-      y = Math.max(leftY, rightY, y + 31) + 6;
 
-      const drawHeader = () => {
+      const accountDetails = [
+        billAddress,
+        account?.contact ? `Attn: ${account.contact}` : "",
+        account?.phone ?? "",
+        account?.email ?? "",
+      ];
+      const shipDetails = [
+        document.shipToAddress || billAddress,
+        document.shipToContact || account?.contact || "",
+        account?.phone ?? "",
+      ];
+      const leftEnd = address(
+        document.kind === "Purchase Order"
+          ? "VENDOR"
+          : document.kind === "Quotation"
+            ? "CUSTOMER"
+            : "BILL TO",
+        billName,
+        accountDetails,
+        margin,
+      );
+      const rightEnd = address(
+        "SHIP TO",
+        document.shipToName || billName,
+        shipDetails,
+        margin + 93,
+      );
+      y = Math.max(leftEnd, rightEnd) + 5;
+
+      const metadata =
+        document.kind === "Purchase Order"
+          ? [
+              ["REQUISITIONER", document.requisitioner],
+              ["SHIP VIA", document.shipVia],
+              ["FOB", document.fob],
+              ["SHIPPING TERMS", document.shippingTerms],
+              ["REQUIRED BY", dateLabel(document.dueDate)],
+            ]
+          : [
+              ["SALES PERSON", document.salesPerson],
+              ["P.O. #", document.poNumber],
+              ["SHIP DATE", dateLabel(document.shipDate)],
+              ["SHIP VIA", document.shipVia],
+              ["TERMS", document.terms],
+            ];
+      if (document.kind !== "Quotation") {
+        const cellWidth = (pageWidth - margin * 2) / metadata.length;
+        metadata.forEach(([label, value], index) => {
+          const x = margin + index * cellWidth;
+          pdf.setFillColor(...navy);
+          pdf.rect(x, y, cellWidth, 7, "F");
+          write(
+            label,
+            x + 1.5,
+            y + 4.8,
+            cellWidth - 3,
+            6,
+            true,
+            [255, 255, 255],
+          );
+          write(value || "—", x + 1.5, y + 12, cellWidth - 3, 7, false, ink);
+        });
+        y += 20;
+      }
+
+      const drawTableHeader = () => {
         pdf.setFillColor(...navy);
-        pdf.rect(margin, y, width - margin * 2, 8, "F");
-        text("DESCRIPTION", margin + 2, y + 5.5, 82, 7, true, [255, 255, 255]);
-        text("UNIT PRICE", 118, y + 5.5, 24, 7, true, [255, 255, 255]);
-        text("QTY", 146, y + 5.5, 13, 7, true, [255, 255, 255]);
-        text("GST", 163, y + 5.5, 12, 7, true, [255, 255, 255]);
-        pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(7);
-        pdf.setTextColor(255, 255, 255);
-        pdf.text("AMOUNT", right - 2, y + 5.5, { align: "right" });
+        pdf.rect(margin, y, pageWidth - margin * 2, 8, "F");
+        write("ITEM", margin + 2, y + 5.5, 20, 7, true, [255, 255, 255]);
+        write(
+          "DESCRIPTION",
+          margin + 24,
+          y + 5.5,
+          80,
+          7,
+          true,
+          [255, 255, 255],
+        );
+        write(
+          "QTY",
+          margin + 132,
+          y + 5.5,
+          12,
+          7,
+          true,
+          [255, 255, 255],
+          "right",
+        );
+        write(
+          "UNIT PRICE",
+          margin + 157,
+          y + 5.5,
+          20,
+          7,
+          true,
+          [255, 255, 255],
+          "right",
+        );
+        write(
+          "GST",
+          margin + 169,
+          y + 5.5,
+          12,
+          7,
+          true,
+          [255, 255, 255],
+          "right",
+        );
+        write("AMOUNT", right, y + 5.5, 25, 7, true, [255, 255, 255], "right");
         y += 8;
       };
-      const newPage = () => {
-        pdf.addPage();
-        y = margin;
-        drawHeader();
-      };
-      drawHeader();
-      lines.forEach((line, index) => {
+      drawTableHeader();
+
+      for (const [index, line] of (document.lines ?? []).entries()) {
         const description = pdf.splitTextToSize(
-          line.description,
+          line.description || "—",
           79,
         ) as string[];
-        const rowHeight = Math.max(9, description.length * 4 + 4);
-        if (y + rowHeight > height - 38) newPage();
+        const rowHeight = Math.max(8, description.length * 4 + 4);
+        if (y + rowHeight > pageHeight - 28) {
+          pdf.addPage();
+          y = margin;
+          drawTableHeader();
+        }
         if (index % 2 === 1) {
           pdf.setFillColor(245, 247, 250);
-          pdf.rect(margin, y, width - margin * 2, rowHeight, "F");
+          pdf.rect(margin, y, pageWidth - margin * 2, rowHeight, "F");
         }
         pdf.setDrawColor(226, 232, 240);
         pdf.line(margin, y + rowHeight, right, y + rowHeight);
-        text(line.description, margin + 2, y + 5, 79, 8);
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(8);
-        pdf.setTextColor(...ink);
-        pdf.text(money(line.unitPrice).replace("₹", "INR "), 141, y + 5, {
-          align: "right",
-        });
-        pdf.text(String(line.quantity), 158, y + 5, { align: "right" });
-        pdf.text(line.taxable ? `${document.taxRate}%` : "—", 173, y + 5, {
-          align: "right",
-        });
-        pdf.text(
-          money(line.quantity * line.unitPrice).replace("₹", "INR "),
-          right - 2,
+        write(line.itemCode || "—", margin + 2, y + 5, 20, 7);
+        write(line.description, margin + 24, y + 5, 79, 7);
+        write(
+          String(line.quantity),
+          margin + 132,
           y + 5,
-          { align: "right" },
-        );
-        y += rowHeight;
-      });
-
-      y += 5;
-      const totalX = right - 68;
-      const totalRow = (label: string, value: number, bold = false) => {
-        text(label, totalX, y + 4, 38, 8, bold, gray);
-        pdf.setFont("helvetica", bold ? "bold" : "normal");
-        pdf.setFontSize(bold ? 11 : 8);
-        pdf.setTextColor(...(bold ? navy : ink));
-        pdf.text(money(value).replace("₹", "INR "), right, y + 4, {
-          align: "right",
-        });
-        y += bold ? 8 : 6;
-      };
-      totalRow("Subtotal", document.subtotal);
-      totalRow(`GST (${document.taxRate}%)`, document.taxAmount);
-      totalRow("Shipping", document.shipping ?? 0);
-      if (document.other) totalRow("Other charges", document.other);
-      pdf.setDrawColor(...navy);
-      pdf.line(totalX, y, right, y);
-      y += 2;
-      totalRow("TOTAL", document.total, true);
-      y += 4;
-
-      for (const [label, value] of [
-        ["TERMS", document.terms],
-        ["NOTES / SPECIAL INSTRUCTIONS", document.comments],
-      ] as const) {
-        if (!value) continue;
-        y += text(label, margin, y + 4, width - margin * 2, 8, true, navy);
-        y += text(value, margin, y + 2, width - margin * 2, 8) + 3;
-        if (y > height - 22) {
-          pdf.addPage();
-          y = margin;
-        }
-      }
-
-      const pages = pdf.getNumberOfPages();
-      for (let page = 1; page <= pages; page += 1) {
-        pdf.setPage(page);
-        pdf.setDrawColor(226, 232, 240);
-        pdf.line(margin, height - 13, right, height - 13);
-        text(
-          `${company.name || "Your company"} · ${document.number}`,
-          margin,
-          height - 8,
-          130,
+          12,
           7,
           false,
-          gray,
+          ink,
+          "right",
         );
+        write(
+          money(line.unitPrice).replace("₹", "INR "),
+          margin + 157,
+          y + 5,
+          20,
+          7,
+          false,
+          ink,
+          "right",
+        );
+        write(
+          line.taxable ? `${line.taxRate}%` : "—",
+          margin + 169,
+          y + 5,
+          12,
+          7,
+          false,
+          ink,
+          "right",
+        );
+        write(
+          money(line.quantity * line.unitPrice).replace("₹", "INR "),
+          right,
+          y + 5,
+          27,
+          7,
+          false,
+          ink,
+          "right",
+        );
+        y += rowHeight;
+      }
+
+      if (y + 58 > pageHeight - 18) {
+        pdf.addPage();
+        y = margin;
+      }
+      y += 7;
+      if (document.notes || document.termsAndConditions) {
+        const termsText =
+          document.kind === "Quotation"
+            ? document.termsAndConditions
+            : document.notes;
+        write(
+          document.kind === "Quotation"
+            ? "TERMS AND CONDITIONS"
+            : "COMMENTS / INSTRUCTIONS",
+          margin,
+          y,
+          95,
+          8,
+          true,
+          navy,
+        );
+        const noteEnd = write(termsText, margin, y + 5, 95, 8, false, ink);
+        y = Math.max(y + 10, noteEnd + 3);
+      }
+      const totalRows = [
+        ["SUBTOTAL", subtotal],
+        ["GST", tax],
+        ["SHIPPING", document.shipping],
+        ["OTHER", document.other],
+      ] as const;
+      let totalsY = y;
+      for (const [label, value] of totalRows) {
+        write(label, right - 55, totalsY, 27, 8, false, muted);
+        write(
+          money(value).replace("₹", "INR "),
+          right,
+          totalsY,
+          45,
+          8,
+          false,
+          ink,
+          "right",
+        );
+        totalsY += 5;
+      }
+      pdf.setDrawColor(...navy);
+      pdf.line(right - 58, totalsY, right, totalsY);
+      write("TOTAL", right - 55, totalsY + 6, 28, 10, true, navy);
+      write(
+        money(subtotal + tax + document.shipping + document.other).replace(
+          "₹",
+          "INR ",
+        ),
+        right,
+        totalsY + 6,
+        45,
+        10,
+        true,
+        navy,
+        "right",
+      );
+
+      const pageCount = pdf.getNumberOfPages();
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+        pdf.setPage(pageNumber);
+        pdf.setDrawColor(226, 232, 240);
+        pdf.line(margin, pageHeight - 13, right, pageHeight - 13);
+        pdf.setFont("helvetica", "normal");
         pdf.setFontSize(7);
-        pdf.setTextColor(...gray);
-        pdf.text(`${page} / ${pages}`, right, height - 8, { align: "right" });
+        pdf.setTextColor(...muted);
+        pdf.text(document.number, margin, pageHeight - 8);
+        pdf.text(`${pageNumber} / ${pageCount}`, right, pageHeight - 8, {
+          align: "right",
+        });
       }
       pdf.save(`${document.number.replace(/[^A-Za-z0-9_-]/g, "_")}.pdf`);
       notify("PDF downloaded.", "success");
@@ -1094,297 +1255,271 @@ export function DocumentPreview({
   };
 
   return (
-    <div className="document-preview-overlay fixed inset-0 z-[75] overflow-y-auto bg-[#070d16]/90 p-2 backdrop-blur-sm sm:p-5">
-      <div className="no-print mx-auto mb-3 flex max-w-[980px] flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-700 bg-[#101b2a] p-3">
-        <div className="flex items-center gap-2">
-          <div className="rounded bg-cyan-400/10 p-2 text-cyan-300">
-            <Printer size={15} />
+    <div className="document-preview-overlay fixed inset-0 z-[80] flex flex-col items-center overflow-y-auto bg-[#080f19]/90 p-3 sm:p-6">
+      <div className="document-preview-toolbar sticky top-0 z-10 mb-3 flex w-full max-w-[210mm] items-center justify-between rounded border border-slate-700 bg-[#111e2e] px-3 py-2">
+        <div>
+          <div className="text-[10px] font-semibold text-slate-200">
+            Print preview
           </div>
-          <div>
-            <h2 className="text-[11px] font-semibold text-slate-100">
-              Document ready
-            </h2>
-            <p className="text-[9px] text-slate-500">
-              {document.number} · {document.kind}
-            </p>
+          <div className="text-[9px] text-slate-500">
+            Use “Save as PDF” in your print dialog to download a PDF.
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <button
-            type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 px-3 py-2 text-[10px] font-medium text-slate-200 hover:bg-slate-800"
-          >
-            <Printer size={13} /> Print
-          </button>
-          <button
-            type="button"
-            disabled={downloading}
             onClick={() => void downloadPdf()}
-            className="inline-flex items-center gap-1.5 rounded-md bg-cyan-400 px-3 py-2 text-[10px] font-semibold text-[#062d31] hover:bg-cyan-300 disabled:opacity-50"
+            disabled={downloading}
+            className="inline-flex items-center gap-1.5 rounded border border-slate-600 px-3 py-2 text-[10px] font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+            data-testid="button-download-account-pdf"
           >
             <Download size={13} />
             {downloading ? "Preparing PDF…" : "Download PDF"}
           </button>
           <button
-            type="button"
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-1.5 rounded bg-cyan-400 px-3 py-2 text-[10px] font-semibold text-[#062d31] hover:bg-cyan-300"
+          >
+            <Printer size={13} />
+            Print / Save PDF
+          </button>
+          <button
             onClick={onClose}
-            className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
             aria-label="Close preview"
           >
-            <X size={15} />
+            <X size={16} />
           </button>
         </div>
       </div>
-      <article className="document-print-surface mx-auto min-h-[297mm] w-full max-w-[210mm] bg-white px-6 py-8 text-slate-800 shadow-2xl sm:px-[16mm] sm:py-[14mm]">
-        <header className="flex flex-col justify-between gap-6 border-b-2 border-[#284a7d] pb-5 sm:flex-row">
-          <div className="min-w-0">
-            <div className="text-[20px] font-bold tracking-tight text-[#284a7d]">
-              {company.name || "Your company"}
+      <article className="document-print-sheet w-full max-w-[210mm] bg-white p-8 text-slate-900 shadow-2xl sm:p-12">
+        <header className="flex items-start justify-between gap-6 border-b-2 border-slate-900 pb-5">
+          <div className="max-w-[60%]">
+            <div className="text-[22px] font-bold tracking-tight">
+              {document.companyName || "Company Name"}
             </div>
-            <div className="mt-2 space-y-0.5 text-[10px] leading-4 text-slate-600">
-              {company.address && <p>{company.address}</p>}
-              {company.gstin && (
+            <p className="mt-2 whitespace-pre-line text-[10px] leading-4 text-slate-600">
+              {document.companyAddress || "Company address"}
+              {document.companyPhone ? `\nPhone: ${document.companyPhone}` : ""}
+              {document.companyEmail ? `\nEmail: ${document.companyEmail}` : ""}
+              {document.companyGstin ? `\nGSTIN: ${document.companyGstin}` : ""}
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-[27px] font-bold tracking-wide text-blue-700">
+              {document.kind === "Purchase Order"
+                ? "PURCHASE ORDER"
+                : document.kind === "Quotation"
+                  ? "QUOTATION"
+                  : document.kind.toUpperCase()}
+            </div>
+            <div className="mt-2 space-y-1 text-[10px]">
+              <p>
+                <span className="mr-3 text-slate-500">NUMBER</span>
+                <strong>{document.number}</strong>
+              </p>
+              <p>
+                <span className="mr-3 text-slate-500">DATE</span>
+                <strong>{dateLabel(document.issueDate)}</strong>
+              </p>
+              {(document.kind === "Invoice" ||
+                document.kind === "Tax Invoice") && (
                 <p>
-                  <strong>GSTIN:</strong> {company.gstin}
+                  <span className="mr-3 text-slate-500">DUE DATE</span>
+                  <strong>{dateLabel(document.dueDate)}</strong>
                 </p>
               )}
-              {company.email && <p>{company.email}</p>}
-              {company.phone && <p>{company.phone}</p>}
-              {company.website && <p>{company.website}</p>}
-            </div>
-          </div>
-          <div className="sm:min-w-[205px] sm:text-right">
-            <div className="text-[26px] font-bold tracking-[.06em] text-[#284a7d]">
-              {document.kind.toUpperCase()}
-            </div>
-            <p className="mt-1 font-mono text-[12px] font-semibold text-slate-700">
-              {document.number}
-            </p>
-            <div className="mt-2 space-y-1 text-[10px] text-slate-600">
-              <p>
-                <span className="mr-2 text-slate-400">DATE</span>
-                {displayDate(document.issueDate)}
-              </p>
-              <p>
-                <span className="mr-2 text-slate-400">
-                  {isQuote ? "VALID UNTIL" : isPo ? "SHIP DATE" : "DUE DATE"}
-                </span>
-                {displayDate(
-                  isQuote
-                    ? document.validUntil
-                    : isPo
-                      ? document.shipDate
-                      : document.dueDate,
-                )}
-              </p>
-              {document.customerReference && (
+              {document.kind === "Quotation" && (
                 <p>
-                  <span className="mr-2 text-slate-400">REFERENCE</span>
-                  {document.customerReference}
+                  <span className="mr-3 text-slate-500">VALID UNTIL</span>
+                  <strong>{dateLabel(document.validUntil)}</strong>
                 </p>
               )}
             </div>
           </div>
         </header>
-        <section className="my-6 grid gap-4 sm:grid-cols-2">
-          <DocumentAddress
-            title={isPo ? "VENDOR" : isQuote ? "CUSTOMER" : "BILL TO"}
-            account={account}
-          />
-          <DocumentAddress
-            title={isQuote ? "PREPARED BY" : "SHIP TO"}
-            lines={
-              isQuote
-                ? ([
-                    document.salesperson || company.name,
-                    company.email,
-                    company.phone,
-                  ].filter(Boolean) as string[])
-                : ([
-                    document.shippingAddress ||
-                      (isPo ? company.address : account?.address),
-                    document.shipVia && `Ship via: ${document.shipVia}`,
-                    document.fob && `FOB: ${document.fob}`,
-                  ].filter(Boolean) as string[])
+
+        <section className="my-5 grid grid-cols-2 gap-5 text-[10px]">
+          <AddressBlock
+            title={
+              document.kind === "Purchase Order"
+                ? "VENDOR"
+                : document.kind === "Quotation"
+                  ? "CUSTOMER"
+                  : "BILL TO"
             }
+            name={billName}
+            address={billAddress}
+            contact={account?.contact}
+            phone={account?.phone}
+            email={account?.email}
+          />
+          <AddressBlock
+            title="SHIP TO"
+            name={document.shipToName || billName}
+            address={document.shipToAddress || billAddress}
+            contact={document.shipToContact || account?.contact}
+            phone={document.shipToContact || account?.phone}
           />
         </section>
-        {(document.salesperson ||
-          document.shipVia ||
-          document.fob ||
-          document.terms) && (
-          <div className="mb-5 grid grid-cols-2 gap-px bg-slate-200 sm:grid-cols-4">
-            {[
-              ["PREPARED BY", document.salesperson],
-              ["SHIP VIA", document.shipVia],
-              ["FOB", document.fob],
-              [isPo ? "SHIPPING TERMS" : "TERMS", document.terms],
-            ]
-              .filter((entry) => entry[1])
-              .map(([label, value]) => (
-                <div key={label} className="bg-white px-2 py-2">
-                  <div className="text-[8px] font-semibold tracking-wide text-slate-400">
-                    {label}
-                  </div>
-                  <div className="mt-1 text-[10px] text-slate-700">{value}</div>
+
+        {(document.kind === "Purchase Order" ||
+          document.kind === "Invoice" ||
+          document.kind === "Tax Invoice") && (
+          <section className="mb-4 grid grid-cols-5 gap-px border border-slate-300 bg-slate-300 text-[9px]">
+            {(document.kind === "Purchase Order"
+              ? [
+                  ["REQUISITIONER", document.requisitioner],
+                  ["SHIP VIA", document.shipVia],
+                  ["FOB", document.fob],
+                  ["SHIPPING TERMS", document.shippingTerms],
+                  ["REQUIRED BY", dateLabel(document.dueDate)],
+                ]
+              : [
+                  ["SALES PERSON", document.salesPerson],
+                  ["P.O. #", document.poNumber],
+                  ["SHIP DATE", dateLabel(document.shipDate)],
+                  ["SHIP VIA", document.shipVia],
+                  ["TERMS", document.terms],
+                ]
+            ).map(([label, value]) => (
+              <div key={label} className="min-h-12 bg-white">
+                <div className="bg-blue-900 px-2 py-1 font-bold tracking-wide text-white">
+                  {label}
                 </div>
-              ))}
+                <div className="px-2 py-2">{value || "—"}</div>
+              </div>
+            ))}
+          </section>
+        )}
+
+        {document.kind === "Quotation" && (
+          <div className="mb-3 text-[10px] text-slate-600">
+            Prepared by {document.salesPerson || "—"}
           </div>
         )}
-        <div className="overflow-hidden rounded border border-slate-200">
-          <table className="w-full border-collapse text-left text-[10px]">
-            <thead className="bg-[#284a7d] text-white">
-              <tr>
-                <th className="px-3 py-2.5 font-semibold">DESCRIPTION</th>
-                <th className="px-2 py-2.5 text-right font-semibold">
-                  UNIT PRICE
-                </th>
-                <th className="px-2 py-2.5 text-right font-semibold">QTY</th>
-                <th className="px-2 py-2.5 text-right font-semibold">GST</th>
-                <th className="px-3 py-2.5 text-right font-semibold">AMOUNT</th>
+
+        <table className="w-full border-collapse text-left text-[10px]">
+          <thead>
+            <tr className="bg-blue-900 text-white">
+              <th className="border border-blue-900 px-2 py-2">ITEM #</th>
+              <th className="border border-blue-900 px-2 py-2">DESCRIPTION</th>
+              <th className="border border-blue-900 px-2 py-2 text-right">
+                QTY
+              </th>
+              <th className="border border-blue-900 px-2 py-2 text-right">
+                UNIT PRICE
+              </th>
+              <th className="border border-blue-900 px-2 py-2 text-right">
+                GST
+              </th>
+              <th className="border border-blue-900 px-2 py-2 text-right">
+                AMOUNT
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {document.lines?.map((line) => (
+              <tr key={line.id} className="even:bg-slate-100">
+                <td className="border border-slate-300 px-2 py-2">
+                  {line.itemCode || "—"}
+                </td>
+                <td className="border border-slate-300 px-2 py-2">
+                  {line.description}
+                </td>
+                <td className="border border-slate-300 px-2 py-2 text-right">
+                  {line.quantity}
+                </td>
+                <td className="border border-slate-300 px-2 py-2 text-right">
+                  {money(line.unitPrice)}
+                </td>
+                <td className="border border-slate-300 px-2 py-2 text-right">
+                  {line.taxable ? `${line.taxRate}%` : "—"}
+                </td>
+                <td className="border border-slate-300 px-2 py-2 text-right">
+                  {money(line.quantity * line.unitPrice)}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {lines.map((line, index) => (
-                <tr
-                  key={index}
-                  className={index % 2 ? "bg-slate-50" : "bg-white"}
-                >
-                  <td className="border-b border-slate-100 px-3 py-2.5 font-medium text-slate-700">
-                    {line.description}
-                  </td>
-                  <td className="border-b border-slate-100 px-2 py-2.5 text-right">
-                    {money(line.unitPrice)}
-                  </td>
-                  <td className="border-b border-slate-100 px-2 py-2.5 text-right">
-                    {line.quantity}
-                  </td>
-                  <td className="border-b border-slate-100 px-2 py-2.5 text-right">
-                    {line.taxable ? `${document.taxRate}%` : "—"}
-                  </td>
-                  <td className="border-b border-slate-100 px-3 py-2.5 text-right font-medium">
-                    {money(line.quantity * line.unitPrice)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-5 flex justify-end">
-          <div className="w-full max-w-[280px] space-y-2 text-[10px]">
-            <PreviewAmount label="Subtotal" value={document.subtotal} />
-            <PreviewAmount
-              label={`GST (${document.taxRate}%)`}
-              value={document.taxAmount}
-            />
-            <PreviewAmount label="Shipping" value={document.shipping ?? 0} />
-            <PreviewAmount label="Other charges" value={document.other ?? 0} />
-            <div className="border-t-2 border-[#284a7d] pt-2">
-              <PreviewAmount label="TOTAL" value={document.total} strong />
+            ))}
+          </tbody>
+        </table>
+
+        <section className="mt-5 flex items-start justify-between gap-6">
+          <div className="max-w-[56%] flex-1">
+            <div className="bg-blue-900 px-2 py-1.5 text-[10px] font-bold text-white">
+              {document.kind === "Quotation"
+                ? "TERMS AND CONDITIONS"
+                : "COMMENTS OR SPECIAL INSTRUCTIONS"}
             </div>
-          </div>
-        </div>
-        {(document.terms || document.comments) && (
-          <div className="mt-7 grid gap-4 sm:grid-cols-2">
-            {document.terms && (
-              <div>
-                <h3 className="border-b border-slate-200 pb-1.5 text-[9px] font-bold tracking-wide text-[#284a7d]">
-                  TERMS & CONDITIONS
-                </h3>
-                <p className="mt-2 whitespace-pre-wrap text-[9px] leading-4 text-slate-600">
-                  {document.terms}
-                </p>
-              </div>
-            )}
-            {document.comments && (
-              <div>
-                <h3 className="border-b border-slate-200 pb-1.5 text-[9px] font-bold tracking-wide text-[#284a7d]">
-                  NOTES / SPECIAL INSTRUCTIONS
-                </h3>
-                <p className="mt-2 whitespace-pre-wrap text-[9px] leading-4 text-slate-600">
-                  {document.comments}
-                </p>
+            <p className="min-h-16 whitespace-pre-line border border-slate-300 p-2 text-[9px] leading-4 text-slate-700">
+              {document.kind === "Quotation"
+                ? document.termsAndConditions
+                : document.notes}
+            </p>
+            {document.kind === "Quotation" && (
+              <div className="mt-5 border-t border-slate-400 pt-2 text-[9px] text-slate-600">
+                Customer acceptance (sign below): __________________________
               </div>
             )}
           </div>
-        )}
-        <footer className="mt-12 border-t border-slate-200 pt-3 text-center text-[9px] text-slate-500">
-          {company.email && (
-            <p>
-              Questions? Contact {company.email}
-              {company.phone ? ` · ${company.phone}` : ""}
+          <div className="w-[42%] space-y-1.5 text-[10px]">
+            <AmountRow label="SUBTOTAL" value={money(subtotal)} />
+            <AmountRow label="GST" value={money(tax)} />
+            <AmountRow label="SHIPPING" value={money(document.shipping)} />
+            <AmountRow label="OTHER" value={money(document.other)} />
+            <div className="flex justify-between border-t-2 border-slate-800 pt-2 text-[13px] font-bold">
+              <span>TOTAL</span>
+              <span>
+                {money(subtotal + tax + document.shipping + document.other)}
+              </span>
+            </div>
+            {document.kind === "Invoice" || document.kind === "Tax Invoice" ? (
+              <p className="pt-3 text-right text-[9px] text-slate-600">
+                Please make payment as per agreed terms.
+              </p>
+            ) : null}
+          </div>
+        </section>
+        <footer className="mt-10 border-t border-slate-200 pt-4 text-center text-[9px] leading-4 text-slate-500">
+          {document.companyName || "Company Name"} · {document.companyPhone} ·{" "}
+          {document.companyEmail}
+          {document.kind === "Quotation" && (
+            <p className="mt-2 font-semibold italic text-slate-700">
+              Thank you for your business.
             </p>
           )}
-          <p className="mt-1 font-medium text-[#284a7d]">
-            {isQuote
-              ? "Thank you for considering our proposal."
-              : isPo
-                ? "Thank you for your order."
-                : "Thank you for your business."}
-          </p>
         </footer>
       </article>
     </div>
   );
 }
 
-function DocumentAddress({
+function AddressBlock({
   title,
-  account,
-  lines,
+  name,
+  address,
+  contact,
+  phone,
+  email,
 }: {
   title: string;
-  account?: DocumentAccount;
-  lines?: string[];
+  name: string;
+  address: string;
+  contact?: string;
+  phone?: string;
+  email?: string;
 }) {
-  const content =
-    lines ??
-    ([
-      account?.name,
-      account?.contact && `Attn: ${account.contact}`,
-      account?.address,
-      account?.email,
-      account?.phone,
-    ].filter(Boolean) as string[]);
   return (
-    <div className="overflow-hidden rounded border border-slate-200">
-      <h3 className="bg-[#284a7d] px-3 py-1.5 text-[9px] font-bold tracking-wide text-white">
+    <div className="min-h-28">
+      <div className="mb-1 bg-blue-900 px-2 py-1 font-bold tracking-wide text-white">
         {title}
-      </h3>
-      <div className="min-h-[74px] space-y-0.5 px-3 py-2.5 text-[10px] leading-4 text-slate-600">
-        {content.length ? (
-          content.map((line, index) => (
-            <p
-              key={index}
-              className={index === 0 ? "font-semibold text-slate-800" : ""}
-            >
-              {line}
-            </p>
-          ))
-        ) : (
-          <p className="text-slate-400">Address not provided</p>
-        )}
       </div>
-    </div>
-  );
-}
-
-function PreviewAmount({
-  label,
-  value,
-  strong = false,
-}: {
-  label: string;
-  value: number;
-  strong?: boolean;
-}) {
-  return (
-    <div
-      className={`flex items-center justify-between ${strong ? "text-[12px] font-bold text-[#284a7d]" : "text-slate-600"}`}
-    >
-      <span>{label}</span>
-      <span>{money(value)}</span>
+      <div className="px-1 leading-4">
+        <strong>{name}</strong>
+        {address && <div className="whitespace-pre-line">{address}</div>}
+        {contact && <div>Attn: {contact}</div>}
+        {phone && <div>{phone}</div>}
+        {email && <div>{email}</div>}
+      </div>
     </div>
   );
 }

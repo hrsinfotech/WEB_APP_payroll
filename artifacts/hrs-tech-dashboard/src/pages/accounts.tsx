@@ -20,20 +20,30 @@ import {
 } from "lucide-react";
 import { z } from "zod";
 import {
-  DocumentComposer,
-  DocumentPreview,
+  AccountDocumentForm,
+  AccountDocumentPreview,
   nextDocumentNumber,
-  type CompanyProfile,
-  type ComposedDocument,
-  type DocumentAccount,
-  type DocumentKind,
+  type AccountDocument,
+  type AccountDocumentKind,
+  type AccountDocumentValues,
 } from "@/pages/accounts-documents";
 
 type Notify = (message: string, tone?: "success" | "warning" | "info") => void;
-type AccountKind = DocumentAccount["kind"];
+type AccountKind = "Supplier" | "Vendor" | "Client";
+type DocumentKind = AccountDocumentKind;
 type DocumentStatus = "Draft" | "Pending" | "Due soon" | "Paid";
-type AccountRecord = DocumentAccount;
-type LedgerDocument = ComposedDocument;
+
+type AccountRecord = {
+  id: string;
+  kind: AccountKind;
+  name: string;
+  address: string;
+  email: string;
+  contact: string;
+  phone: string;
+};
+
+type LedgerDocument = AccountDocument;
 
 type PayrollRecord = {
   id: string;
@@ -57,15 +67,6 @@ const accountSchema = z.array(
   }),
 );
 
-const companySchema = z.object({
-  name: z.string(),
-  address: z.string(),
-  email: z.string(),
-  phone: z.string(),
-  gstin: z.string(),
-  website: z.string(),
-});
-
 const documentSchema = z.array(
   z.object({
     id: z.string(),
@@ -81,27 +82,39 @@ const documentSchema = z.array(
     status: z.enum(["Draft", "Pending", "Due soon", "Paid"]),
     issueDate: z.string().optional(),
     validUntil: z.string().optional(),
-    customerReference: z.string().optional(),
-    salesperson: z.string().optional(),
+    shipToName: z.string().optional(),
+    shipToAddress: z.string().optional(),
+    shipToContact: z.string().optional(),
+    salesPerson: z.string().optional(),
+    poNumber: z.string().optional(),
     shipDate: z.string().optional(),
-    shippingAddress: z.string().optional(),
     shipVia: z.string().optional(),
     fob: z.string().optional(),
     terms: z.string().optional(),
-    comments: z.string().optional(),
-    shipping: z.number().optional(),
-    other: z.number().optional(),
-    issuer: companySchema.optional(),
+    requisitioner: z.string().optional(),
+    shippingTerms: z.string().optional(),
+    notes: z.string().optional(),
+    termsAndConditions: z.string().optional(),
+    companyName: z.string().optional(),
+    companyAddress: z.string().optional(),
+    companyPhone: z.string().optional(),
+    companyEmail: z.string().optional(),
+    companyGstin: z.string().optional(),
     lines: z
       .array(
         z.object({
+          id: z.string(),
+          itemCode: z.string(),
           description: z.string(),
           quantity: z.number(),
           unitPrice: z.number(),
           taxable: z.boolean(),
+          taxRate: z.number(),
         }),
       )
       .optional(),
+    shipping: z.number().optional(),
+    other: z.number().optional(),
   }),
 );
 
@@ -117,14 +130,61 @@ const payrollSchema = z.array(
   }),
 );
 
-const defaultCompany: CompanyProfile = {
-  name: "HRS Infotech",
-  address: "",
-  email: "",
-  phone: "",
-  gstin: "",
-  website: "",
-};
+type StoredLedgerDocument = z.output<typeof documentSchema>[number];
+
+function normalizeDocument(document: StoredLedgerDocument): LedgerDocument {
+  const numberYear = /-(\d{4})-/.exec(document.number)?.[1];
+  const lines = document.lines?.length
+    ? document.lines
+    : [
+        {
+          id: `legacy-${document.id}`,
+          itemCode: "",
+          description: document.title,
+          quantity: 1,
+          unitPrice: document.subtotal,
+          taxable: true,
+          taxRate: document.taxRate,
+        },
+      ];
+  return {
+    ...document,
+    issueDate:
+      document.issueDate ??
+      `${numberYear ?? document.dueDate.slice(0, 4)}-01-01`,
+    validUntil: document.validUntil ?? "",
+    shipToName: document.shipToName ?? "",
+    shipToAddress: document.shipToAddress ?? "",
+    shipToContact: document.shipToContact ?? "",
+    salesPerson: document.salesPerson ?? "",
+    poNumber: document.poNumber ?? "",
+    shipDate: document.shipDate ?? "",
+    shipVia: document.shipVia ?? "",
+    fob: document.fob ?? "",
+    terms: document.terms ?? "Due on receipt",
+    requisitioner: document.requisitioner ?? "",
+    shippingTerms: document.shippingTerms ?? "",
+    notes: document.notes ?? "",
+    termsAndConditions: document.termsAndConditions ?? "",
+    companyName: document.companyName ?? "HRS Infotech",
+    companyAddress: document.companyAddress ?? "",
+    companyPhone: document.companyPhone ?? "",
+    companyEmail: document.companyEmail ?? "",
+    companyGstin: document.companyGstin ?? "",
+    lines,
+    shipping: document.shipping ?? 0,
+    other: document.other ?? 0,
+  };
+}
+
+function storedDocuments(): LedgerDocument[] {
+  const saved = window.localStorage.getItem("hrs.accounts.documents");
+  if (saved === null)
+    return seedDocuments.map((document) =>
+      normalizeDocument(documentSchema.element.parse(document)),
+    );
+  return documentSchema.parse(JSON.parse(saved)).map(normalizeDocument);
+}
 
 const seedAccounts: AccountRecord[] = [
   {
@@ -165,7 +225,7 @@ const seedAccounts: AccountRecord[] = [
   },
 ];
 
-const seedDocuments: LedgerDocument[] = [
+const seedDocuments = [
   {
     id: "d-1",
     number: "INV-2026-0142",
@@ -361,23 +421,21 @@ function AccountsPage({ notify }: { notify: Notify }) {
   const [accounts, setAccounts] = useState(() =>
     storedValue("hrs.accounts.contacts", accountSchema, seedAccounts),
   );
-  const [documents, setDocuments] = useState(() =>
-    storedValue("hrs.accounts.documents", documentSchema, seedDocuments),
-  );
+  const [documents, setDocuments] = useState(storedDocuments);
   const [payroll, setPayroll] = useState(() =>
     storedValue("hrs.accounts.payroll", payrollSchema, seedPayroll),
-  );
-  const [company, setCompany] = useState(() =>
-    storedValue("hrs.accounts.company", companySchema, defaultCompany),
   );
   const [search, setSearch] = useState("");
   const [contactOpen, setContactOpen] = useState(false);
   const [documentOpen, setDocumentOpen] = useState(false);
+  const [newAccount, setNewAccount] = useState<AccountKind>("Supplier");
+  const [newDocument, setNewDocument] = useState<DocumentKind>("Invoice");
+  const [editingDocument, setEditingDocument] = useState<LedgerDocument | null>(
+    null,
+  );
   const [previewDocument, setPreviewDocument] = useState<LedgerDocument | null>(
     null,
   );
-  const [newAccount, setNewAccount] = useState<AccountKind>("Supplier");
-  const [newDocument, setNewDocument] = useState<DocumentKind>("Invoice");
 
   useEffect(() => {
     try {
@@ -393,10 +451,6 @@ function AccountsPage({ notify }: { notify: Notify }) {
         "hrs.accounts.payroll",
         JSON.stringify(payroll),
       );
-      window.localStorage.setItem(
-        "hrs.accounts.company",
-        JSON.stringify(company),
-      );
     } catch (error) {
       console.error("Unable to save Accounts prototype data.", error);
       notify(
@@ -404,7 +458,7 @@ function AccountsPage({ notify }: { notify: Notify }) {
         "warning",
       );
     }
-  }, [accounts, documents, payroll, company, notify]);
+  }, [accounts, documents, payroll, notify]);
 
   const accountById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account])),
@@ -492,22 +546,36 @@ function AccountsPage({ notify }: { notify: Notify }) {
     notify(`${account.kind} added to Accounts.`, "success");
   };
 
-  const persistNewDocument = (document: ComposedDocument) => {
-    const issueYear = Number((document.issueDate ?? "").slice(0, 4));
-    const savedDocument: LedgerDocument = {
-      ...document,
-      number: nextDocumentNumber(
-        document.kind,
-        documents,
-        Number.isInteger(issueYear) && issueYear > 0
-          ? issueYear
-          : new Date().getFullYear(),
-      ),
-    };
-    setDocuments((current) => [savedDocument, ...current]);
+  const persistDocument = (values: AccountDocumentValues) => {
+    if (!accountById.has(values.accountId)) {
+      notify("Select a valid account before saving the document.", "warning");
+      return;
+    }
+    if (editingDocument) {
+      const updated: LedgerDocument = {
+        ...editingDocument,
+        ...values,
+        number: editingDocument.number,
+        status: editingDocument.status,
+      };
+      setDocuments((current) =>
+        current.map((document) =>
+          document.id === editingDocument.id ? updated : document,
+        ),
+      );
+      notify(`${updated.kind} ${updated.number} updated.`, "success");
+    } else {
+      const document: LedgerDocument = {
+        ...values,
+        id: crypto.randomUUID(),
+        number: nextDocumentNumber(values.kind, values.issueDate, documents),
+        status: values.kind === "Quotation" ? "Draft" : "Pending",
+      };
+      setDocuments((current) => [document, ...current]);
+      notify(`${document.kind} ${document.number} created.`, "success");
+    }
     setDocumentOpen(false);
-    setPreviewDocument(savedDocument);
-    notify(`${savedDocument.kind} ${savedDocument.number} created.`, "success");
+    setEditingDocument(null);
   };
 
   const updateAttendance = (id: string, value: number) => {
@@ -558,16 +626,31 @@ function AccountsPage({ notify }: { notify: Notify }) {
     notify("Contact removed.", "success");
   };
 
+  const editDocument = (document: LedgerDocument) => {
+    setNewDocument(document.kind);
+    setEditingDocument(document);
+    setDocumentOpen(true);
+  };
+
   const documentForm = documentOpen ? (
-    <DocumentComposer
-      accounts={accounts}
-      documents={documents}
-      company={company}
-      onCompanyChange={setCompany}
+    <AccountDocumentForm
+      key={editingDocument?.id ?? `new-${newDocument}`}
       kind={newDocument}
-      onKindChange={setNewDocument}
-      onClose={() => setDocumentOpen(false)}
-      onSave={persistNewDocument}
+      documents={documents}
+      accounts={accounts}
+      companyDefaults={{
+        companyName: documents[0]?.companyName ?? "HRS Infotech",
+        companyAddress: documents[0]?.companyAddress ?? "",
+        companyPhone: documents[0]?.companyPhone ?? "",
+        companyEmail: documents[0]?.companyEmail ?? "",
+        companyGstin: documents[0]?.companyGstin ?? "",
+      }}
+      document={editingDocument ?? undefined}
+      onCancel={() => {
+        setDocumentOpen(false);
+        setEditingDocument(null);
+      }}
+      onSubmit={persistDocument}
     />
   ) : null;
 
@@ -714,9 +797,32 @@ function AccountsPage({ notify }: { notify: Notify }) {
             <Plus size={13} />
             Add account
           </button>
+          <label className="sr-only" htmlFor="new-document-kind">
+            Document type to create
+          </label>
+          <select
+            id="new-document-kind"
+            value={newDocument}
+            onChange={(event) =>
+              setNewDocument(event.target.value as DocumentKind)
+            }
+            className="h-9 rounded border border-slate-700 bg-[#111e2e] px-2 text-[10px] text-slate-200"
+          >
+            {(
+              ["Invoice", "Quotation", "Purchase Order", "Tax Invoice"] as const
+            ).map((kind) => (
+              <option key={kind} value={kind}>
+                {kind}
+              </option>
+            ))}
+          </select>
           <button
-            onClick={() => setDocumentOpen(true)}
+            onClick={() => {
+              setEditingDocument(null);
+              setDocumentOpen(true);
+            }}
             className="inline-flex items-center gap-1.5 rounded bg-cyan-400 px-3 py-2 text-[10px] font-semibold text-[#062d31] hover:bg-cyan-300"
+            data-testid="button-create-account-document"
           >
             <FilePlus2 size={13} />
             Create document
@@ -837,6 +943,7 @@ function AccountsPage({ notify }: { notify: Notify }) {
               documents={filteredDocuments.slice(0, 5)}
               accountById={accountById}
               onMarkPaid={markDocumentPaid}
+              onEdit={editDocument}
               onPreview={setPreviewDocument}
             />
           </section>
@@ -989,6 +1096,7 @@ function AccountsPage({ notify }: { notify: Notify }) {
             documents={filteredDocuments}
             accountById={accountById}
             onMarkPaid={markDocumentPaid}
+            onEdit={editDocument}
             onPreview={setPreviewDocument}
           />
         </section>
@@ -1184,10 +1292,9 @@ function AccountsPage({ notify }: { notify: Notify }) {
       {contactForm}
       {documentForm}
       {previewDocument && (
-        <DocumentPreview
+        <AccountDocumentPreview
           document={previewDocument}
           account={accountById.get(previewDocument.accountId)}
-          company={previewDocument.issuer ?? company}
           onClose={() => setPreviewDocument(null)}
           notify={notify}
         />
@@ -1200,11 +1307,13 @@ function DocumentTable({
   documents,
   accountById,
   onMarkPaid,
+  onEdit,
   onPreview,
 }: {
   documents: LedgerDocument[];
   accountById: Map<string, AccountRecord>;
   onMarkPaid: (id: string) => void;
+  onEdit: (document: LedgerDocument) => void;
   onPreview: (document: LedgerDocument) => void;
 }) {
   if (documents.length === 0)
@@ -1213,7 +1322,7 @@ function DocumentTable({
     );
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[650px] border-collapse text-left">
+      <table className="w-full min-w-[800px] border-collapse text-left">
         <thead className="bg-[#152337] text-[9px] tracking-[.08em] text-slate-500">
           <tr>
             <th className="px-3 py-2.5">DOCUMENT</th>
@@ -1222,7 +1331,7 @@ function DocumentTable({
             <th className="px-3 py-2.5">GST</th>
             <th className="px-3 py-2.5">TOTAL</th>
             <th className="px-3 py-2.5">STATUS</th>
-            <th className="px-3 py-2.5">ACTION</th>
+            <th className="px-3 py-2.5">ACTIONS</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800/70">
@@ -1259,24 +1368,30 @@ function DocumentTable({
                   <button
                     onClick={() => onPreview(document)}
                     className="text-[9px] font-medium text-cyan-300 hover:text-cyan-200"
+                    data-testid={`button-preview-${document.id}`}
                   >
-                    View / PDF
+                    Print / PDF
                   </button>
-                  {document.status !== "Paid" &&
-                    document.status !== "Draft" && (
-                      <button
-                        onClick={() => onMarkPaid(document.id)}
-                        className="text-[9px] font-medium text-slate-400 hover:text-slate-200"
-                      >
-                        Mark paid
-                      </button>
-                    )}
-                  {document.status === "Paid" && (
+                  <button
+                    onClick={() => onEdit(document)}
+                    className="text-[9px] font-medium text-slate-300 hover:text-white"
+                    data-testid={`button-edit-${document.id}`}
+                  >
+                    Edit
+                  </button>
+                  {document.status !== "Paid" && document.status !== "Draft" ? (
+                    <button
+                      onClick={() => onMarkPaid(document.id)}
+                      className="text-[9px] font-medium text-emerald-300 hover:text-emerald-200"
+                    >
+                      Mark paid
+                    </button>
+                  ) : document.status === "Paid" ? (
                     <span className="inline-flex items-center gap-1 text-[9px] text-emerald-300">
                       <Check size={12} />
                       Paid
                     </span>
-                  )}
+                  ) : null}
                 </div>
               </td>
             </tr>
